@@ -1,22 +1,23 @@
 package me.rerere.rikkahub.data.ai.transformers
 
-import kotlin.time.Instant
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.ui.UIMessage
-import me.rerere.rikkahub.utils.toLocalDateTime
-import java.time.ZoneId
-import java.time.format.TextStyle
-import java.util.Locale
+import me.rerere.ai.ui.UIMessagePart
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.time.toJavaInstant
 
-private const val TIME_GAP_THRESHOLD_SECONDS = 3600L // 1 小时
+private val WEEK_NAMES = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+private val DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
 
 /**
  * 时间提醒注入转换器
  *
- * 在时间间隔较大的消息之前自动注入 <time_reminder>，帮助 AI 了解对话的时间间隔
+ * 在每一条用户消息开头加一行 [2026-10-05 周一 14:32 · 距上一条消息5分钟]，
+ * 让 AI 每次都知道对方是几点发的、隔了多久。只改发给模型的内容，不改聊天界面里显示的消息。
  */
 object TimeReminderTransformer : InputMessageTransformer {
     override suspend fun transform(
@@ -29,51 +30,37 @@ object TimeReminderTransformer : InputMessageTransformer {
 }
 
 internal fun applyTimeReminder(messages: List<UIMessage>): List<UIMessage> {
-    val result = mutableListOf<UIMessage>()
     val tz = TimeZone.currentSystemDefault()
+    val zone = java.time.ZoneId.systemDefault()
 
-    var firstUserFound = false
-    for (i in messages.indices) {
-        val current = messages[i]
-        if (current.role == MessageRole.USER) {
-            val currInstant = current.createdAt.toInstant(tz)
-            if (!firstUserFound) {
-                firstUserFound = true
-                result.add(buildTimeReminderMessage(null, currInstant))
-            } else {
-                val previous = messages[i - 1]
-                val prevInstant = previous.createdAt.toInstant(tz)
-                val gapSeconds = (currInstant - prevInstant).inWholeSeconds
+    var prevUserMillis: Long? = null
+    return messages.map { message ->
+        if (message.role != MessageRole.USER) return@map message
+        val instant = message.createdAt.toInstant(tz)
+        val nowMillis = instant.toEpochMilliseconds()
+        val stamp = buildStamp(instant.toJavaInstant().atZone(zone), prevUserMillis?.let { nowMillis - it })
+        prevUserMillis = nowMillis
+        message.copy(parts = prependStamp(message.parts, stamp))
+    }
+}
 
-                if (gapSeconds > TIME_GAP_THRESHOLD_SECONDS) {
-                    result.add(buildTimeReminderMessage(gapSeconds, currInstant))
-                }
-            }
+private fun prependStamp(parts: List<UIMessagePart>, stamp: String): List<UIMessagePart> {
+    val firstText = parts.indexOfFirst { it is UIMessagePart.Text }
+    if (firstText < 0) return listOf(UIMessagePart.Text(stamp)) + parts
+    val text = parts[firstText] as UIMessagePart.Text
+    return parts.toMutableList().also { it[firstText] = text.copy(text = "$stamp\n${text.text}") }
+}
+
+private fun buildStamp(time: ZonedDateTime, gapMillis: Long?): String {
+    var s = "${time.format(DATE_FORMAT)} ${WEEK_NAMES[time.dayOfWeek.value - 1]} ${time.format(TIME_FORMAT)}"
+    if (gapMillis != null) {
+        val mins = Math.round(gapMillis / 60000.0)
+        s += when {
+            mins < 2 -> " · 刚刚还在聊"
+            mins < 60 -> " · 距上一条消息${mins}分钟"
+            mins < 48 * 60 -> " · 距上一条消息${Math.round(mins / 60.0)}小时"
+            else -> " · 已经${Math.round(mins / 1440.0)}天没聊了"
         }
-        result.add(current)
     }
-
-    return result
-}
-
-private fun buildTimeReminderMessage(gapSeconds: Long?, instant: Instant): UIMessage {
-    val javaInstant = instant.toJavaInstant()
-    val dayOfWeek = javaInstant.atZone(ZoneId.systemDefault()).dayOfWeek
-        .getDisplayName(TextStyle.FULL, Locale.getDefault())
-    val timeStr = javaInstant.toLocalDateTime()
-    val content = if (gapSeconds != null) {
-        val gapText = formatGap(gapSeconds)
-        "<time_reminder>Current time: $dayOfWeek, $timeStr ($gapText since last message)</time_reminder>"
-    } else {
-        "<time_reminder>Current time: $dayOfWeek, $timeStr</time_reminder>"
-    }
-    return UIMessage.user(content)
-}
-
-private fun formatGap(seconds: Long): String {
-    return when {
-        seconds < 3600 -> "${seconds / 60} min"
-        seconds < 86400 -> "${seconds / 3600} h"
-        else -> "${seconds / 86400} d"
-    }
+    return "[$s]"
 }
