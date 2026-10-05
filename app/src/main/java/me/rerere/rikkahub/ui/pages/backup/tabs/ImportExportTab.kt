@@ -24,7 +24,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.dokar.sonner.ToastType
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import me.rerere.rikkahub.data.sync.transfer.UpstreamBackupConverter
 import me.rerere.rikkahub.R
 import me.rerere.rikkahub.ui.components.ui.CardGroup
 import me.rerere.rikkahub.ui.components.ui.StickyHeader
@@ -153,6 +156,7 @@ fun ImportExportTab(
                         "transfer" -> {
                             val tempFile =
                                 File(context.cacheDir, "temp_rikkahub_transfer_${System.currentTimeMillis()}.rhk")
+                            var convertedFile: File? = null
                             try {
                                 context.contentResolver.openInputStream(sourceUri)?.use { inputStream ->
                                     FileOutputStream(tempFile).use { outputStream ->
@@ -160,7 +164,24 @@ fun ImportExportTab(
                                     }
                                 }
 
-                                val result = vm.restoreFromRikkaHubTransfer(tempFile)
+                                // 原版 RikkaHub 导出的 ZIP 备份（没有 manifest.json）先在手机上转成 .rhk 再导入；
+                                // 已经是 .rhk 的直接导入
+                                val isTransferPackage = runCatching {
+                                    java.util.zip.ZipFile(tempFile).use { it.getEntry("manifest.json") != null }
+                                }.getOrDefault(false)
+                                val importFile = if (isTransferPackage) {
+                                    tempFile
+                                } else {
+                                    convertedFile = File(
+                                        context.cacheDir,
+                                        "converted_rikkahub_transfer_${System.currentTimeMillis()}.rhk",
+                                    )
+                                    withContext(Dispatchers.IO) {
+                                        UpstreamBackupConverter.convert(tempFile, convertedFile!!)
+                                    }
+                                    convertedFile!!
+                                }
+                                val result = vm.restoreFromRikkaHubTransfer(importFile)
                                 val report = result.report
                                 val message = if (report.replacedAllData) {
                                     context.getString(
@@ -183,6 +204,7 @@ fun ImportExportTab(
                                 }
                             } finally {
                                 tempFile.delete()
+                                convertedFile?.delete()
                             }
                         }
                     }
