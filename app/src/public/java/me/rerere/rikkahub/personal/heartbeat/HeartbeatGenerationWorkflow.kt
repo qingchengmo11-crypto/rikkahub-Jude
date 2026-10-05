@@ -271,15 +271,25 @@ class HeartbeatGenerationWorkflow(
             )
         }
 
-        val message = UIMessage(
-            role = MessageRole.ASSISTANT,
-            parts = listOf(UIMessagePart.Text(generatedText)),
-        )
+        // 整条原样存下来（思考链、调用的工具、token 都带着），和平时聊天一样；
+        // 没有生成出消息才退回只存文字。
+        val generatedAssistantMessages = generatedMessages
+            .drop(requestMessages.size)
+            .filter { it.role == MessageRole.ASSISTANT }
+        val messagesToSave = generatedAssistantMessages.ifEmpty {
+            listOf(
+                UIMessage(
+                    role = MessageRole.ASSISTANT,
+                    parts = listOf(UIMessagePart.Text(generatedText)),
+                ),
+            )
+        }
+        val message = messagesToSave.last()
         val savedConversationId = appendMessage(
             conversationId = conversationId,
             assistant = assistant,
             storedConversation = storedConversation,
-            message = message,
+            messages = messagesToSave,
             runStartedAtMillis = runStartedAtMillis,
         ) ?: run {
             recordExperience(
@@ -565,7 +575,7 @@ class HeartbeatGenerationWorkflow(
         conversationId: Uuid,
         assistant: Assistant,
         storedConversation: Conversation?,
-        message: UIMessage,
+        messages: List<UIMessage>,
         runStartedAtMillis: Long,
     ): Uuid? = conversationWriteMutex.withLock {
         if (deliveryGuard.beforeDelivery(
@@ -586,7 +596,7 @@ class HeartbeatGenerationWorkflow(
                 messageNodes = emptyList(),
             )
         val updated = latest.copy(
-            messageNodes = latest.messageNodes + message.toMessageNode(),
+            messageNodes = latest.messageNodes + messages.map { it.toMessageNode() },
             updateAt = Instant.now(),
         )
         if (conversationRepository.existsConversationById(conversationId)) {
