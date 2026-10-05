@@ -3,6 +3,7 @@ package me.rerere.rikkahub.personal.heartbeat
 import android.content.Context
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toInstant
+import kotlinx.datetime.toLocalDateTime
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.ui.finishReasoning
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.common.android.Logging
 import me.rerere.rikkahub.data.ai.GenerationChunk
@@ -51,6 +53,7 @@ import me.rerere.rikkahub.service.VoiceCallNotifications
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.time.Instant
+import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
 class HeartbeatGenerationWorkflow(
@@ -596,7 +599,15 @@ class HeartbeatGenerationWorkflow(
                 messageNodes = emptyList(),
             )
         val updated = latest.copy(
-            messageNodes = latest.messageNodes + messages.map { it.toMessageNode() },
+            messageNodes = latest.messageNodes + messages.map { generated ->
+                // 平时聊天生成完会把思考标记成「已结束」；这里也要，不然思考链一直转圈
+                val done = generated.finishReasoning()
+                (if (done.finishedAt == null) {
+                    done.copy(finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()))
+                } else {
+                    done
+                }).toMessageNode()
+            },
             updateAt = Instant.now(),
         )
         if (conversationRepository.existsConversationById(conversationId)) {

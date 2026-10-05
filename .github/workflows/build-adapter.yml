@@ -1,0 +1,38 @@
+name: Build Adapter APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "发布版本号，例如 adapter-1"
+        required: true
+        default: "adapter-1"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 打包适配器
+        run: ./gradlew -p import-adapter :app:assembleDebug --no-daemon --stacktrace
+
+      - name: 发布到 Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          APK=$(find import-adapter/app/build/outputs/apk -name "*.apk" | head -1)
+          cp "$APK" rikkahub-adapter.apk
+          gh release create "${{ inputs.tag }}" rikkahub-adapter.apk \
+            --title "${{ inputs.tag }} 聊天记录适配器" \
+            --notes "把原版（上游）RikkaHub 导出的 ZIP 备份转成 .rhk，再到「RikkaHub 时间版」里：设置 → 备份与恢复 → 从其他APP导入 → 导入转换后的 RikkaHub 数据。注意导入会用原版数据完整替换时间版里当前的助手、模型、API 设置和聊天记录。"
