@@ -31,7 +31,7 @@ jobs:
             "project_info": { "project_number": "000000000000", "project_id": "placeholder", "storage_bucket": "placeholder.appspot.com" },
             "client": [
               { "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000000000", "android_client_info": { "package_name": "me.rerere.rikkahub.jude" } }, "api_key": [ { "current_key": "placeholder" } ] },
-              { "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000000001", "android_client_info": { "package_name": "me.rerere.rikkahub.jude.debug" } }, "api_key": [ { "current_key": "placeholder" } ] }
+              { "client_info": { "mobilesdk_app_id": "1:000000000000:android:0000000000000000000001", "android_client_info": { "package_name": "me.rerere.rikkahub.jude.time" } }, "api_key": [ { "current_key": "placeholder" } ] }
             ],
             "configuration_version": "1"
           }
@@ -50,5 +50,5 @@ jobs:
           APK=$(grep -i universal apks.txt | head -1)
           cp "$APK" app-public-universal-debug.apk
           gh release create "${{ inputs.tag }}" app-public-universal-debug.apk \
-            --title "${{ inputs.tag }} 每条消息带时间戳" \
-            --notes "每条用户消息开头自动带上发送时间和距上一条消息的间隔（需在助手设置里打开「时间提醒」）。"
+            --title "${{ inputs.tag }} 独立版：时间戳、醒来整条存、朋友圈原图" \
+            --notes "独立安装，不会覆盖原来的 app（包名 me.rerere.rikkahub.jude.time，名字叫「RikkaHub 时间版」），原来的聊天记录不受影响，想搬就用 app 里的导出/导入备份。包含：每条消息带时间戳（助手设置里打开「时间提醒」）、自动醒来整条存下思考链和工具、聊到朋友圈时直接给模型看原图。"

@@ -47,6 +47,7 @@ import me.rerere.ai.provider.ProviderSetting
 import me.rerere.ai.provider.TextGenerationParams
 import me.rerere.ai.ui.ToolApprovalState
 import me.rerere.ai.ui.UIMessage
+import me.rerere.ai.provider.Modality
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.ai.ui.UIMessageAnnotation
 import me.rerere.ai.ui.canResumeToolExecution
@@ -930,6 +931,20 @@ class ChatService(
 
                 else -> null
             }
+            // 聊到朋友圈时，把最近一条带图朋友圈的原图也给模型看（只给这次请求，不写进聊天记录）。
+            // 以前只给文字描述，模型自己看不到图。
+            val momentImageParts = if (momentContextPrompt != null && Modality.IMAGE in model.inputModalities) {
+                latestMomentImageParts(momentScopeId)
+            } else {
+                emptyList()
+            }
+            val requestLastContextMessage = if (momentImageParts.isNotEmpty()) {
+                (transientLastContextMessage ?: generationMessages.lastOrNull()?.takeIf { it.role == MessageRole.USER })
+                    ?.let { it.copy(parts = it.parts + momentImageParts) }
+                    ?: transientLastContextMessage
+            } else {
+                transientLastContextMessage
+            }
             var voiceCallFailureReported = false
             val generationFlow = generationHandler.generateText(
                 settings = settings,
@@ -943,7 +958,7 @@ class ChatService(
                 conversationModeInjectionIds = conversation.modeInjectionIds,
                 conversationLorebookIds = conversation.lorebookIds,
                 runtimeStateSystemPrompt = voiceCallRuntimeContext.systemPrompt,
-                transientLastContextMessage = transientLastContextMessage,
+                transientLastContextMessage = requestLastContextMessage,
                 extraSystemPrompt = listOfNotNull(
                     when (requestMode) {
                         ChatRequestMode.Normal -> null
@@ -1585,6 +1600,17 @@ class ChatService(
                 appendMomentEntry(index + 1, entry)
             }
         }.trim()
+    }
+
+    private suspend fun latestMomentImageParts(assistantId: Uuid): List<UIMessagePart> {
+        val moment = momentRepository.getTimeline(assistantId).take(6)
+            .map { it.moment }
+            .firstOrNull { it.imageUris.isNotEmpty() }
+            ?: return emptyList()
+        return buildList {
+            add(UIMessagePart.Text("（附：上面 Moments 里最近一条带图的动态的原图，共 ${minOf(moment.imageUris.size, MomentRepository.MAX_IMAGES)} 张，请直接看图。）"))
+            moment.imageUris.take(MomentRepository.MAX_IMAGES).forEach { add(UIMessagePart.Image(it)) }
+        }
     }
 
     private suspend fun buildAnonymousQuestionContextPromptIfNeeded(
