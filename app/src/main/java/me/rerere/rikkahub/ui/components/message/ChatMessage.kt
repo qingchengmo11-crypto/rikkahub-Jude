@@ -318,7 +318,7 @@ fun ChatMessage(
 
         if (!pendingChatVoiceReply) {
             ProvideTextStyle(textStyle) {
-                ChatMessageNerdLine(message = message)
+                ChatMessageNerdLine(message = message, showTime = assistant?.enableTimeReminder == true)
             }
         }
     }

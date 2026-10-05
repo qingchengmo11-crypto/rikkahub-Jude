@@ -27,6 +27,9 @@ import me.rerere.rikkahub.ui.context.LocalSettings
 import me.rerere.rikkahub.utils.formatNumber
 import me.rerere.rikkahub.utils.toFixed
 import java.time.Duration
+import java.time.format.DateTimeFormatter
+
+private val TIME_LINE_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
 
 /**
  * 显示消息的技术统计信息（如 token 使用量）
@@ -36,6 +39,7 @@ fun ChatMessageNerdLine(
     message: UIMessage,
     modifier: Modifier = Modifier,
     color: Color = MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f),
+    showTime: Boolean = false,
 ) {
     val settings = LocalSettings.current.displaySetting
 
@@ -46,6 +50,21 @@ fun ChatMessageNerdLine(
                 itemVerticalAlignment = Alignment.CenterVertically,
                 modifier = modifier.padding(horizontal = 4.dp),
             ) {
+                if (showTime) {
+                    // 每条消息发送的日期和时间（跟「时间提醒」开关一起开）
+                    StatsItem(
+                        icon = {
+                            Icon(
+                                imageVector = HugeIcons.Clock02,
+                                contentDescription = "Time",
+                                modifier = Modifier.size(12.dp)
+                            )
+                        },
+                        content = {
+                            Text(text = message.createdAt.toJavaLocalDateTime().format(TIME_LINE_FORMAT))
+                        }
+                    )
+                }
                 val usage = message.usage
                 if (settings.showTokenUsage && usage != null) {
                     // Input tokens
