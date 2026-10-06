@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
@@ -16,6 +17,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
+import me.rerere.rikkahub.R
 import androidx.compose.ui.unit.dp
 import kotlin.math.cos
 import kotlin.math.min
@@ -29,9 +32,11 @@ fun MomentsButton(
 ) {
     Box(modifier = modifier) {
         IconButton(onClick = onClick) {
-            MomentsLensIcon(
+            Icon(
+                painter = painterResource(R.drawable.ic_notepad),
+                contentDescription = "记事本",
                 tint = LocalContentColor.current,
-                modifier = Modifier.size(24.dp)
+                modifier = Modifier.size(26.dp)
             )
         }
         if (hasUnread) {

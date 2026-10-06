@@ -141,8 +141,8 @@
   <string name="assistant_page_stream_output_desc">Whether to enable streaming output for messages</string>
   <string name="assistant_page_moments_chat_style">聊天模式</string>
   <string name="assistant_page_moments_chat_style_desc">开启后，当前助手回复的每段文字会用米白色消息框包裹；深色模式下使用深色消息框。</string>
-  <string name="assistant_page_moments_enabled">朋友圈</string>
-  <string name="assistant_page_moments_enabled_desc">开启后，当前助手会显示朋友圈入口，并可在合适时发布、点赞或评论动态。</string>
+  <string name="assistant_page_moments_enabled">记事本</string>
+  <string name="assistant_page_moments_enabled_desc">开启后，当前助手会显示记事本入口，并可以发布、点赞或评论动态。</string>
   <string name="assistant_page_anonymous_question_box_enabled">匿名提问箱</string>
   <string name="assistant_page_anonymous_question_box_enabled_desc">开启后，当前助手拥有匿名提问箱，可发布匿名问题并回复用户问题。</string>
   <string name="anonymous_question_box">匿名提问箱</string>

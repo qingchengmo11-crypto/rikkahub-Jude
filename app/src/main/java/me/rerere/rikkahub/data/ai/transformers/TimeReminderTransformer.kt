@@ -9,6 +9,9 @@ import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import kotlin.time.toJavaInstant
 
+/** 自动唤醒时 app 塞进上下文的那条消息的开头标记。它不是用户说的话，所以不盖时间戳。 */
+const val SYSTEM_WAKE_MARKER = "[系统自动唤醒"
+
 private val WEEK_NAMES = arrayOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
 private val DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 private val TIME_FORMAT = DateTimeFormatter.ofPattern("HH:mm")
@@ -36,6 +39,8 @@ internal fun applyTimeReminder(messages: List<UIMessage>): List<UIMessage> {
     var prevUserMillis: Long? = null
     return messages.map { message ->
         if (message.role != MessageRole.USER) return@map message
+        val firstText = (message.parts.firstOrNull { it is UIMessagePart.Text } as? UIMessagePart.Text)?.text
+        if (firstText?.startsWith(SYSTEM_WAKE_MARKER) == true) return@map message
         val instant = message.createdAt.toInstant(tz)
         val nowMillis = instant.toEpochMilliseconds()
         val stamp = buildStamp(instant.toJavaInstant().atZone(zone), prevUserMillis?.let { nowMillis - it })

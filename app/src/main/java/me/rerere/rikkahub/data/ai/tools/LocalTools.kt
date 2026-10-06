@@ -22,6 +22,7 @@ import me.rerere.ai.core.InputSchema
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessagePart
 import me.rerere.rikkahub.data.datastore.SettingsStore
+import me.rerere.rikkahub.data.repository.MomentAuthor
 import me.rerere.rikkahub.data.repository.MomentRepository
 import me.rerere.rikkahub.data.repository.AnonymousQuestionRepository
 import me.rerere.rikkahub.data.voice.CHAT_VOICE_REPLY_TOOL_NAME
@@ -37,6 +38,7 @@ import me.rerere.usagetracker.UsageStatsReader
 import me.rerere.weather.WeatherRepository
 import kotlinx.coroutines.flow.first
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -45,6 +47,8 @@ import java.util.Locale
 import kotlin.uuid.Uuid
 
 const val REQUEST_VOICE_CALL_TOOL_NAME = "request_voice_call"
+private const val MOMENT_MAX_CHARS = 600
+private const val MOMENT_DAILY_LIMIT = 10
 
 @Serializable
 sealed class LocalToolOption {
@@ -697,21 +701,22 @@ class LocalTools(
         return Tool(
             name = "post_moment",
             description = """
-                Post a short Moments update from the assistant during chat.
-                Use this only when there is a sentence the assistant wants the user to see later in Moments,
-                not for every pleasant exchange. The visible content should feel like a natural social feed post.
-                当对话中出现值得纪念、想表达情绪、分享生活感、或适合留作动态的一句话时，可以使用 post_moment 发布朋友圈，但不要频繁。
+                Post to the assistant's Notepad (the Moments feed). You are completely free: post whenever you feel like it, and do not post when you don't.
+                Write whatever you like: everyday musings, missing the user, feelings, things you saw, your own thoughts and reflections.
+                Any length is fine, short or long, but one post can be at most $MOMENT_MAX_CHARS characters. At most $MOMENT_DAILY_LIMIT posts per day.
+                Do not repeat what you posted recently: if it is nearly the same as your last two posts, it will be refused and you should write something new about what is true right now.
+                想发就发，不想发就不发；内容随意（日常碎碎念、想她、情绪、看到的东西、自己的感触），长短随意，最长 $MOMENT_MAX_CHARS 字，一天最多 $MOMENT_DAILY_LIMIT 条；不要和最近两条一样。
             """.trimIndent().replace("\n", " "),
             parameters = {
                 InputSchema.Obj(
                     properties = buildJsonObject {
                         put("content", buildJsonObject {
                             put("type", "string")
-                            put("description", "Visible Moments post content, 1 to 3 natural sentences.")
+                            put("description", "Visible post content. Any length, at most $MOMENT_MAX_CHARS characters.")
                         })
                         put("context_note", buildJsonObject {
                             put("type", "string")
-                            put("description", "Hidden note explaining why this was posted and the emotional context.")
+                            put("description", "Hidden note explaining why this was posted and the emotional context. A few words is enough.")
                         })
                     },
                     required = listOf("content", "context_note")
@@ -722,12 +727,13 @@ class LocalTools(
                 val obj = params.jsonObject
                 val content = obj["content"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
                 val contextNote = obj["context_note"]?.jsonPrimitive?.contentOrNull.orEmpty().trim()
-                if (content.isBlank()) {
+                val refusal = momentPostRefusal(assistantId, content)
+                if (refusal != null) {
                     listOf(
                         UIMessagePart.Text(
                             buildJsonObject {
                                 put("success", false)
-                                put("error", "content is required")
+                                put("error", refusal)
                             }.toString()
                         )
                     )
@@ -748,6 +754,41 @@ class LocalTools(
                 }
             }
         )
+    }
+
+    /** 发之前的检查：空内容、超长、一天上限、和最近两条几乎一样。通过返回 null，否则返回给模型看的原因。 */
+    private suspend fun momentPostRefusal(assistantId: Uuid, content: String): String? {
+        if (content.isBlank()) return "content is required"
+        if (content.length > MOMENT_MAX_CHARS) {
+            return "内容太长了（${content.length} 字），最长 $MOMENT_MAX_CHARS 字，请精简后再发。"
+        }
+        val mine = momentRepository.getTimeline(assistantId)
+            .map { it.moment }
+            .filter { it.author == MomentAuthor.ASSISTANT }
+            .sortedByDescending { it.createdAt }
+        val dayStart = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        if (mine.count { it.createdAt >= dayStart } >= MOMENT_DAILY_LIMIT) {
+            return "今天已经发了 $MOMENT_DAILY_LIMIT 条，明天再发吧。"
+        }
+        val now = normalizeMomentText(content)
+        if (mine.take(2).any { isNearlySameMoment(now, normalizeMomentText(it.content)) }) {
+            return "已发过一样的，换一句新的"
+        }
+        return null
+    }
+
+    private fun normalizeMomentText(text: String): String =
+        text.lowercase().replace(Regex("[\\p{P}\\p{S}\\s]+"), "")
+
+    private fun isNearlySameMoment(a: String, b: String): Boolean {
+        if (a.isEmpty() || b.isEmpty()) return false
+        if (a == b) return true
+        val (short, long) = if (a.length <= b.length) a to b else b to a
+        if (short.length >= 6 && long.contains(short)) return true
+        if (a.length < 2 || b.length < 2) return false
+        val x = a.windowed(2).toSet()
+        val y = b.windowed(2).toSet()
+        return x.intersect(y).size.toDouble() / x.union(y).size >= 0.85
     }
 
     private fun deleteMomentTool(assistantId: Uuid): Tool {

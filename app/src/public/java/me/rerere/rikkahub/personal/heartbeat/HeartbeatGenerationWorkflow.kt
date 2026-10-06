@@ -636,6 +636,7 @@ class HeartbeatGenerationWorkflow(
             锁定请使用 usage_lock_control 的 action=lock，并用 unlock_at_iso 或 unlock_at_timestamp_ms 指定第二天白天的解锁时间，不要使用 duration_minutes。
             只锁定确有新增使用的软件；没有新增使用时不锁。
             输出一条简短自然的消息；若没有需要报告的内容，输出 [PASS]。
+            对话里最后那条以「[系统自动唤醒」开头的消息是 app 自动叫醒你的通知，不是用户刚说的话，不要当成用户在跟你说话。
         """.trimIndent()
         private val HEARTBEAT_SYSTEM_PROMPT = """
             You are running a private, scheduled heartbeat for the current assistant.
@@ -645,6 +646,10 @@ class HeartbeatGenerationWorkflow(
             useful now. If it is not useful, reply with exactly [PASS] instead of forcing a
             message just because this heartbeat was triggered. Otherwise, produce one short
             natural message.
+            The last message in the conversation, marked "[系统自动唤醒", is an automatic wake-up
+            notice from the app, NOT something the user just said. Never reply as if the user
+            had just spoken to you, and never treat the user's pre-written wake-up guidance as
+            their live words.
         """.trimIndent()
     }
 }
