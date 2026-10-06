@@ -485,7 +485,16 @@ class GenerationHandler(
             ) {
                 // Replace only the provider-facing copy. Response accumulation still
                 // starts from `messages`, so runtime state never enters persistence or UI.
-                contextMessages.dropLast(1) + transientLastContextMessage
+                // 按消息编号替换那条用户消息，而不是无脑换掉最后一条：
+                // 工具调用的第二步起，最后一条是助手的「调用+结果」，换掉它模型就看不见自己
+                // 刚调过工具，会一直重复调（随记带图时 Flow 反复写随记就是这么来的）。
+                val index = contextMessages.indexOfLast { it.id == transientLastContextMessage.id }
+                when {
+                    index >= 0 -> contextMessages.toMutableList().also { it[index] = transientLastContextMessage }
+                    contextMessages.last().role == MessageRole.USER ->
+                        contextMessages.dropLast(1) + transientLastContextMessage
+                    else -> contextMessages
+                }
             } else contextMessages
             addAll(requestContextMessages)
         }.transforms(
