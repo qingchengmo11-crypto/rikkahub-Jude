@@ -83,6 +83,16 @@ class MomentsVM(
         }
     }
 
+    /** 她改自己写的随记的文字（只能改她自己写的；时间和图片不动）。 */
+    fun editUserNote(momentId: Uuid, content: String) {
+        viewModelScope.launch {
+            val moment = momentRepository.getMoment(momentId) ?: return@launch
+            if (moment.author != MomentAuthor.USER) return@launch
+            if (content.isBlank() && moment.imageUris.isEmpty()) return@launch
+            momentRepository.updateMoment(moment.copy(content = content.trim()))
+        }
+    }
+
     /** 她删自己写的随记（只删她自己写的，不会删到 Flow 写的）。 */
     fun deleteUserNote(assistantId: Uuid, momentId: Uuid) {
         viewModelScope.launch {
