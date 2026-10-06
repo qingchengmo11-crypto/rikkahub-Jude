@@ -29,20 +29,26 @@ class HeartbeatToolPolicy(private val config: HeartbeatConfig) {
         }
 
     fun classify(tool: Tool): HeartbeatToolRisk {
-        if (tool.name.startsWith(MCP_TOOL_PREFIX)) {
+        // 随记工具改名后，沿用原来朋友圈工具的风险等级（已保存的旧配置里只有旧名字）
+        val name = when (tool.name) {
+            "write_note" -> "post_moment"
+            "delete_note" -> "delete_moment"
+            else -> tool.name
+        }
+        if (name.startsWith(MCP_TOOL_PREFIX)) {
             return if (tool.needsApproval) {
                 HeartbeatToolRisk.HIGH_RISK
             } else {
                 HeartbeatToolRisk.AUTONOMOUS
             }
         }
-        if (tool.name in config.autonomousToolNames) {
+        if (name in config.autonomousToolNames) {
             return HeartbeatToolRisk.AUTONOMOUS
         }
-        if (tool.name in config.readOnlyToolNames) {
+        if (name in config.readOnlyToolNames) {
             return HeartbeatToolRisk.READ_ONLY
         }
-        if (tool.name in config.lowRiskWriteToolNames) {
+        if (name in config.lowRiskWriteToolNames) {
             return HeartbeatToolRisk.LOW_RISK_WRITE
         }
         return HeartbeatToolRisk.HIGH_RISK

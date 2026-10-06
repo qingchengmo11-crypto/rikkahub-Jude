@@ -931,7 +931,7 @@ class ChatService(
 
                 else -> null
             }
-            // 聊到朋友圈时，把最近一条带图朋友圈的原图也给模型看（只给这次请求，不写进聊天记录）。
+            // 聊到随记时，把最近一条带图随记的原图也给模型看（只给这次请求，不写进聊天记录）。
             // 以前只给文字描述，模型自己看不到图。
             val momentImageParts = if (momentContextPrompt != null && Modality.IMAGE in model.inputModalities) {
                 latestMomentImageParts(momentScopeId)
@@ -1582,33 +1582,46 @@ class ChatService(
             return null
         }
 
-        val timeline = momentRepository.getTimeline(assistantId).take(6)
-        if (timeline.isEmpty()) {
+        val notes = momentRepository.getTimeline(assistantId)
+            .sortedByDescending { it.moment.createdAt }
+            .take(2)
+        if (notes.isEmpty()) {
             return """
-                ## Moments context
-                The user appears to be asking about Moments, but there are no saved Moments for this assistant yet.
-                Say this naturally if relevant. Do not invent Moments content.
+                ## 随记
+                用户提到了随记（你们共用的随记本），但现在里面还没有任何内容。
+                如果相关就自然地说明这一点，不要编造随记内容。
             """.trimIndent()
         }
 
         return buildString {
-            appendLine("## Moments context")
-            appendLine("The user appears to be referring to Moments / social-feed content.")
-            appendLine("Use the saved Moments below as lightweight context for this reply. Do not claim there are other Moments, likes, comments, or images beyond this context.")
+            appendLine("## 随记")
+            appendLine("用户提到了随记。随记是你和用户共用的小本子，两个人都能写、都能看，不是社交平台，没有点赞和评论。")
+            appendLine("下面是最近的两条（可能是用户写的，也可能是你自己写的），只作为这次回复的参考，不要说还有别的内容。不需要对它们做任何评论或点赞，要回应就在聊天里说。")
             appendLine()
-            timeline.forEachIndexed { index, entry ->
-                appendMomentEntry(index + 1, entry)
+            notes.forEachIndexed { index, entry ->
+                val moment = entry.moment
+                val who = if (moment.author == MomentAuthor.USER) "用户写的" else "你写的"
+                appendLine("${index + 1}. [$who] ${moment.createdAt.toMomentTimeLabel()}")
+                if (moment.content.isNotBlank()) {
+                    appendLine(moment.content.take(600))
+                }
+                if (moment.imageUris.isNotEmpty()) {
+                    appendLine("（附 ${moment.imageUris.size} 张图）")
+                }
+                appendLine()
             }
         }.trim()
     }
 
     private suspend fun latestMomentImageParts(assistantId: Uuid): List<UIMessagePart> {
-        val moment = momentRepository.getTimeline(assistantId).take(6)
+        val moment = momentRepository.getTimeline(assistantId)
             .map { it.moment }
+            .sortedByDescending { it.createdAt }
+            .take(2)
             .firstOrNull { it.imageUris.isNotEmpty() }
             ?: return emptyList()
         return buildList {
-            add(UIMessagePart.Text("（附：上面 Moments 里最近一条带图的动态的原图，共 ${minOf(moment.imageUris.size, MomentRepository.MAX_IMAGES)} 张，请直接看图。）"))
+            add(UIMessagePart.Text("（附：上面随记里最近一条带图的原图，共 ${minOf(moment.imageUris.size, MomentRepository.MAX_IMAGES)} 张，请直接看图。）"))
             moment.imageUris.take(MomentRepository.MAX_IMAGES).forEach { add(UIMessagePart.Image(it)) }
         }
     }
@@ -1659,47 +1672,10 @@ class ChatService(
         appendLine()
     }
 
+    /** 用户的话里提到「随记」「记事本」时，才把最近的随记给模型看。 */
     private fun String.shouldInjectMomentContext(): Boolean {
         val text = lowercase(Locale.ROOT)
-        val strongSignals = listOf(
-            "朋友圈",
-            "朋友 圈",
-            "moments",
-            "moment",
-            "说说",
-            "空间动态",
-            "动态圈",
-            "朋友圈内容",
-        )
-        if (strongSignals.any { it in text }) return true
-
-        if ("动态规划" in text) return false
-        val socialSubjects = listOf(
-            "你发",
-            "你刚发",
-            "你刚才发",
-            "我发",
-            "我刚发",
-            "我刚才发",
-            "那条",
-            "这条",
-            "上条",
-            "上一条",
-            "刚才那条",
-            "下面",
-        )
-        val socialActions = listOf(
-            "动态",
-            "点赞",
-            "赞了",
-            "评论",
-            "留言",
-            "回复",
-            "红点",
-            "封面",
-            "背景图",
-        )
-        return socialSubjects.any { it in text } && socialActions.any { it in text }
+        return "随记" in text || "记事本" in text
     }
 
     private fun StringBuilder.appendMomentEntry(index: Int, entry: MomentEntry) {

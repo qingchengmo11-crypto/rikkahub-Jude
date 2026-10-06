@@ -69,13 +69,18 @@ class MomentRepository(
         keyword: String,
         latest: Boolean,
         limit: Int,
+        author: MomentAuthor? = null,
     ): List<Moment> {
         val assistantKey = assistantId.toString()
+        // author 不为空时，只在这个作者写的里面找（随记：谁只能删自己写的）
+        val all = dao.getMoments(assistantKey).let { list ->
+            if (author == null) list else list.filter { it.author == author.value }
+        }
         val candidates = when {
             momentId != null -> listOfNotNull(dao.getMoment(momentId.toString()))
-                .filter { it.assistantId == assistantKey }
+                .filter { it.assistantId == assistantKey && (author == null || it.author == author.value) }
 
-            keyword.isNotBlank() -> dao.getMoments(assistantKey).filter { moment ->
+            keyword.isNotBlank() -> all.filter { moment ->
                 listOf(
                     moment.content,
                     moment.contextNote,
@@ -84,7 +89,7 @@ class MomentRepository(
                 ).any { it.contains(keyword, ignoreCase = true) }
             }
 
-            latest -> dao.getMoments(assistantKey).take(1)
+            latest -> all.take(1)
             else -> emptyList()
         }.take(limit.coerceIn(1, 20))
 
@@ -137,8 +142,8 @@ class MomentRepository(
                 contextNote = "",
                 imageDescription = "",
                 images = JsonInstant.encodeToString(imageUris.take(MAX_IMAGES)),
-                replyDueAt = now + Random.nextLong(10, 21) * 60_000L,
-                replyStatus = MomentReplyStatus.PENDING.value,
+                replyDueAt = now,
+                replyStatus = MomentReplyStatus.DONE.value,
                 aiLiked = false,
                 aiReplyContent = "",
                 repliedAt = null,

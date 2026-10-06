@@ -699,24 +699,26 @@ class LocalTools(
 
     private fun postMomentTool(assistantId: Uuid): Tool {
         return Tool(
-            name = "post_moment",
+            name = "write_note",
             description = """
-                Post to the assistant's Notepad (the Moments feed). You are completely free: post whenever you feel like it, and do not post when you don't.
+                Write an entry in your own notebook (随记): a small private-feeling notebook that you and the user both write in and can both read.
+                It is not a social feed: there are no likes, comments, followers or audience. Just write what you want to keep.
+                You are completely free: write whenever you feel like it, and do not when you don't.
                 Write whatever you like: everyday musings, missing the user, feelings, things you saw, your own thoughts and reflections.
-                Any length is fine, short or long, but one post can be at most $MOMENT_MAX_CHARS characters. At most $MOMENT_DAILY_LIMIT posts per day.
-                Do not repeat what you posted recently: if it is nearly the same as your last two posts, it will be refused and you should write something new about what is true right now.
-                想发就发，不想发就不发；内容随意（日常碎碎念、想她、情绪、看到的东西、自己的感触），长短随意，最长 $MOMENT_MAX_CHARS 字，一天最多 $MOMENT_DAILY_LIMIT 条；不要和最近两条一样。
+                Any length is fine, short or long, but one entry can be at most $MOMENT_MAX_CHARS characters. At most $MOMENT_DAILY_LIMIT entries per day.
+                Do not repeat what you wrote recently: if it is nearly the same as your last two entries, it will be refused and you should write something new about what is true right now.
+                这是你和用户共用的随记本，不是社交平台，没有点赞、评论和观众。想写就写，不想写就不写；内容随意（日常碎碎念、想她、情绪、看到的东西、自己的感触），长短随意，最长 $MOMENT_MAX_CHARS 字，一天最多 $MOMENT_DAILY_LIMIT 条；不要和最近两条一样。
             """.trimIndent().replace("\n", " "),
             parameters = {
                 InputSchema.Obj(
                     properties = buildJsonObject {
                         put("content", buildJsonObject {
                             put("type", "string")
-                            put("description", "Visible post content. Any length, at most $MOMENT_MAX_CHARS characters.")
+                            put("description", "The entry text. Any length, at most $MOMENT_MAX_CHARS characters.")
                         })
                         put("context_note", buildJsonObject {
                             put("type", "string")
-                            put("description", "Hidden note explaining why this was posted and the emotional context. A few words is enough.")
+                            put("description", "A short hidden note about why you wrote this and how you felt. A few words is enough.")
                         })
                     },
                     required = listOf("content", "context_note")
@@ -793,32 +795,31 @@ class LocalTools(
 
     private fun deleteMomentTool(assistantId: Uuid): Tool {
         return Tool(
-            name = "delete_moment",
+            name = "delete_note",
             description = """
-                Delete saved Moments in the current assistant's Moments timeline.
-                Use this when the user explicitly asks to delete, remove, withdraw, clear, or erase a Moments post.
-                支持用户说“删除朋友圈”“删掉刚才那条朋友圈”“撤回包含某句话的朋友圈”等场景。
-                Prefer moment_id when known. Otherwise use keyword to match visible/hidden Moment text, or latest=true for the newest Moment.
-                Never delete Moments unless the user asks for deletion.
+                Delete entries that YOU wrote in the notebook (随记). You can only delete your own entries, never the user's.
+                Use this only when the user asks you to delete one, or when you clearly want to take back something you wrote.
+                Prefer note_id when known. Otherwise use keyword to match your entry text, or latest=true for your newest entry.
+                想删自己写的随记时用；只能删你自己写的，删不了用户写的。
             """.trimIndent().replace("\n", " "),
             parameters = {
                 InputSchema.Obj(
                     properties = buildJsonObject {
                         put("moment_id", buildJsonObject {
                             put("type", "string")
-                            put("description", "Optional exact Moment ID to delete.")
+                            put("description", "Optional exact entry ID (the moment_id returned when it was written) to delete.")
                         })
                         put("keyword", buildJsonObject {
                             put("type", "string")
-                            put("description", "Optional keyword to find Moments by content, context note, image description, or assistant reaction.")
+                            put("description", "Optional keyword to find your entries by their text or note.")
                         })
                         put("latest", buildJsonObject {
                             put("type", "boolean")
-                            put("description", "Delete the latest Moment when no ID or keyword is available. Default false.")
+                            put("description", "Delete your latest entry when no ID or keyword is available. Default false.")
                         })
                         put("limit", buildJsonObject {
                             put("type", "integer")
-                            put("description", "Maximum matched Moments to delete, 1 to 20. Default 1.")
+                            put("description", "Maximum matched entries to delete, 1 to 20. Default 1.")
                         })
                     }
                 )
@@ -851,6 +852,7 @@ class LocalTools(
                         keyword = keyword,
                         latest = latest,
                         limit = limit,
+                        author = MomentAuthor.ASSISTANT,
                     )
                     listOf(
                         UIMessagePart.Text(

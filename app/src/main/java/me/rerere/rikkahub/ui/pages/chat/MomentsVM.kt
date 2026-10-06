@@ -83,6 +83,20 @@ class MomentsVM(
         }
     }
 
+    /** 她删自己写的随记（只删她自己写的，不会删到 Flow 写的）。 */
+    fun deleteUserNote(assistantId: Uuid, momentId: Uuid) {
+        viewModelScope.launch {
+            momentRepository.deleteMoments(
+                assistantId = assistantId,
+                momentId = momentId,
+                keyword = "",
+                latest = false,
+                limit = 1,
+                author = MomentAuthor.USER,
+            )
+        }
+    }
+
     fun toggleUserLike(momentId: Uuid) {
         viewModelScope.launch {
             momentRepository.toggleUserLike(momentId)

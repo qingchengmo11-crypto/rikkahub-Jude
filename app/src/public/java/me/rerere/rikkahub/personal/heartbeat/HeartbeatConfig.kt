@@ -46,12 +46,14 @@ data class HeartbeatConfig(
             "clipboard_tool",
             "text_to_speech",
             "post_moment",
+            "write_note",
             "post_anonymous_question",
         )
         val DEFAULT_AUTONOMOUS_TOOLS = setOf(
             "ask_user",
             "delete_anonymous_question",
             "delete_moment",
+            "delete_note",
             "memory_tool",
             "request_voice_call",
             "usage_lock_control",

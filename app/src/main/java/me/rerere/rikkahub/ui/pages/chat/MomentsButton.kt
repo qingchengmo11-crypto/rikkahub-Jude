@@ -34,7 +34,7 @@ fun MomentsButton(
         IconButton(onClick = onClick) {
             Icon(
                 painter = painterResource(R.drawable.ic_notepad),
-                contentDescription = "记事本",
+                contentDescription = "随记",
                 tint = LocalContentColor.current,
                 modifier = Modifier.size(26.dp)
             )
