@@ -2,7 +2,6 @@ package me.rerere.rikkahub.personal.heartbeat
 
 import android.content.Context
 import kotlinx.datetime.TimeZone
-import kotlinx.datetime.toInstant
 import kotlinx.datetime.toLocalDateTime
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
@@ -17,8 +16,8 @@ import kotlinx.serialization.json.put
 import me.rerere.ai.core.MessageRole
 import me.rerere.ai.core.Tool
 import me.rerere.ai.ui.UIMessage
-import me.rerere.ai.ui.finishReasoning
 import me.rerere.ai.ui.UIMessagePart
+import me.rerere.ai.ui.finishReasoning
 import me.rerere.common.android.Logging
 import me.rerere.rikkahub.data.ai.GenerationChunk
 import me.rerere.rikkahub.data.ai.GenerationHandler
@@ -53,9 +52,21 @@ import me.rerere.rikkahub.service.VoiceCallNotifications
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.time.Clock
 import kotlin.uuid.Uuid
 
+/**
+ * 自动唤醒生成逻辑（time-16 重写版）
+ *
+ * 流程：
+ * 1. 找到萧萧最后发消息的那个窗口（按 update_at 最新）
+ * 2. 读取该窗口完整上下文 + 世界书（和平时聊天一样）
+ * 3. 插一条「系统自动唤醒」通知（user 角色），写清楚是系统叫醒、不是萧萧说话
+ * 4. 发给模型，用平时聊天相同的全套工具，必须发消息或做事
+ * 5. 整条结果（思考链+工具+消息）存进那个窗口，他记得、萧萧看得到
+ */
 class HeartbeatGenerationWorkflow(
     private val context: Context,
 ) : KoinComponent {
@@ -68,8 +79,7 @@ class HeartbeatGenerationWorkflow(
     private val mcpManager: McpManager by inject()
     private val chatService: ChatService by inject()
     private val json: Json by inject()
-    private val deliveryGuard by lazy { HeartbeatDeliveryGuard(context, chatService) }
-    private val privateExperienceStore = HeartbeatPrivateExperienceStore(context)
+
     suspend fun run(
         config: HeartbeatConfig,
         mode: HeartbeatExecutionMode = HeartbeatExecutionMode.LIVE,
@@ -78,61 +88,36 @@ class HeartbeatGenerationWorkflow(
         val isLiveRun = mode == HeartbeatExecutionMode.LIVE
 
         val settings = settingsStore.settingsFlow.first()
-        val scheduleStore = HeartbeatScheduleStore(context)
-        val autonomousPlan = scheduleStore.readForAssistant(config.assistantId)
-            ?.takeIf { isLiveRun }
-            ?.takeIf { plan -> plan.wakeAtMillis.minOrNull()?.let { it <= runStartedAtMillis } == true }
-        val assistant = settings.assistants
-            .firstOrNull { it.id.toString() == autonomousPlan?.assistantId }
-            ?: settings.assistants.firstOrNull { it.id.toString() == config.assistantId }
+
+        // 1. 找 assistant
+        val assistant = settings.assistants.firstOrNull { it.id.toString() == config.assistantId }
             ?: settings.getCurrentAssistant()
-        if (isLiveRun && autonomousPlan != null) {
-            scheduleStore.consumeDue(
-                assistantId = config.assistantId,
-                nowMillis = runStartedAtMillis,
-            )
-        }
         val model = settings.findModelById(assistant.chatModelId ?: settings.chatModelId)
             ?: return HeartbeatGenerationResult(
                 outcome = HeartbeatGenerationOutcome.NO_MODEL,
                 reason = HeartbeatRunReason.NO_MODEL,
             )
 
+        // 2. 找萧萧最后发消息的窗口（update_at 最新的那个）
         val storedConversation = conversationRepository
             .getRecentConversations(assistant.id, limit = 1)
             .firstOrNull()
             ?.let { conversationRepository.getConversationById(it.id) }
         val conversationId = storedConversation?.id ?: Uuid.random()
 
-        deliveryGuard.beforeGeneration(
-            conversationId = conversationId,
-            expectedAssistantId = assistant.id.toString(),
-        )?.let { block ->
-            recordExperience(mode, conversationId, block.name)
-            return block.toGenerationResult()
-        }
-        val completedConversationMessages = storedConversation
-            ?.currentMessages
-            .orEmpty()
-            .filterCompletedToolMessages()
-        val generationConversationMessages = storedConversation
+        // 3. 读完整上下文（和平时聊天一样，带世界书）
+        val history = storedConversation
             ?.messagesForGeneration()
             .orEmpty()
             .filterCompletedToolMessages()
-        val history = generationConversationMessages
             .let { messages ->
-                if (assistant.contextMessageSize > 0) {
-                    messages.takeLast(assistant.contextMessageSize)
-                } else {
-                    messages
-                }
+                if (assistant.contextMessageSize > 0) messages.takeLast(assistant.contextMessageSize)
+                else messages
             }
-        Logging.log(
-            tag = "Heartbeat",
-            message = "context=all:${completedConversationMessages.size} generation:${generationConversationMessages.size} " +
-                "history:${history.size} compressed:${storedConversation?.activeCompressedMessageNodeIds?.size ?: 0} " +
-                "summary:${!storedConversation?.compressedSummary.isNullOrBlank()}",
-        )
+
+        Logging.log("Heartbeat", "wake: conversation=$conversationId history=${history.size}")
+
+        // 如果萧萧刚发了消息还没回，等她——不要插进去打断
         if (history.lastOrNull()?.role == MessageRole.USER) {
             return HeartbeatGenerationResult(
                 outcome = HeartbeatGenerationOutcome.PENDING_USER,
@@ -140,40 +125,37 @@ class HeartbeatGenerationWorkflow(
             )
         }
 
-        val goodNightActive = if (isLiveRun) {
-            updateGoodNightMode(completedConversationMessages, config.assistantId)
-        } else {
-            readGoodNightMode(config.assistantId)
+        // 4. 计算距萧萧上次说话多久了
+        val lastUserAtMillis = HeartbeatConfigStore(context, config.assistantId).run {
+            val t = lastUserMessageAt(); close(); t
         }
+        val elapsedMinutes = if (lastUserAtMillis > 0) {
+            ((runStartedAtMillis - lastUserAtMillis) / 60_000).coerceAtLeast(0)
+        } else 0L
+        val nowStr = DateTimeFormatter.ofPattern("HH:mm")
+            .withZone(ZoneId.systemDefault())
+            .format(java.time.Instant.ofEpochMilli(runStartedAtMillis))
 
-        if (isLiveRun) updateLastUserMessageAt(completedConversationMessages, config.assistantId)
-        val desireState = currentDesireState(
-            runStartedAtMillis,
-            persist = isLiveRun,
-            assistantId = config.assistantId,
-        )
+        // 5. 插「系统唤醒通知」（user 角色）
+        val wakePrompt = buildWakePrompt(config, elapsedMinutes, nowStr)
+        val requestMessages = history + UIMessage.user(wakePrompt)
 
-        val prompt = UIMessage.user(
-            HeartbeatPromptContext.build(config.heartbeatPrompt, completedConversationMessages),
-        )
-        val requestMessages = history + prompt
-        val allAvailableTools = buildAvailableTools(settings, assistant, conversationId)
-        val allowedTools = HeartbeatToolPolicy(config).filter(allAvailableTools, mode)
-        // Heartbeat is bound to the conversation it is about; assistant/global scopes
-        // would reintroduce cross-window memory leakage during background runs.
+        // 6. 工具——和平时聊天完全一样，不过滤
+        val allTools = buildAllTools(settings, assistant, conversationId)
+
+        // 7. 内存范围（conversation 级别，和平时一样）
         val conversationMemoryScope = MemoryScope.conversation(conversationId)
         val memories = if (assistant.enableMemory) {
             memoryRepository.getMemories(conversationMemoryScope)
-        } else {
-            emptyList()
-        }
+        } else emptyList()
+
+        // 8. 发给模型生成
         val generationAssistant = assistant.copy(
             enableMemory = false,
             enableRecentChatsReference = false,
             streamOutput = false,
         )
         var generatedMessages: List<UIMessage> = requestMessages
-
         generationHandler.generateText(
             settings = settings,
             model = model,
@@ -182,13 +164,13 @@ class HeartbeatGenerationWorkflow(
             conversationId = conversationId,
             memories = memories,
             includeMemoriesInPrompt = assistant.enableMemory,
-            tools = allowedTools,
+            tools = allTools,
             maxSteps = config.maxToolSteps,
             conversationSystemPrompt = storedConversation?.customSystemPrompt,
             conversationContextSummary = storedConversation?.compressedSummary,
             conversationModeInjectionIds = storedConversation?.modeInjectionIds.orEmpty(),
-            conversationLorebookIds = storedConversation?.lorebookIds.orEmpty(),
-            extraSystemPrompt = if (goodNightActive) GOOD_NIGHT_SYSTEM_PROMPT else HEARTBEAT_SYSTEM_PROMPT,
+            conversationLorebookIds = storedConversation?.lorebookIds.orEmpty(),  // 世界书带进来
+            extraSystemPrompt = WAKE_SYSTEM_PROMPT,
             inputTransformers = listOf(
                 TimeReminderTransformer,
                 PromptInjectionTransformer,
@@ -199,7 +181,6 @@ class HeartbeatGenerationWorkflow(
             ),
             outputTransformers = buildList {
                 add(ThinkTagTransformer)
-                // Base64 extraction writes local files, so it is excluded from diagnostic runs.
                 if (isLiveRun) add(Base64ImageToLocalFileTransformer)
                 add(RegexOutputTransformer)
             },
@@ -208,260 +189,99 @@ class HeartbeatGenerationWorkflow(
             if (chunk is GenerationChunk.Messages) generatedMessages = chunk.messages
         }
 
-        deliveryGuard.beforeDelivery(
-            conversationId = conversationId,
-            runStartedAtMillis = runStartedAtMillis,
-            expectedAssistantId = assistant.id.toString(),
-        )?.let { block ->
-            recordExperience(mode, conversationId, block.name, desireState)
-            return block.toGenerationResult()
-        }
-
-        if (isLiveRun && goodNightActive) {
-            updateGoodNightNoUsageCounter(generatedMessages, config.assistantId)
-        }
-
-        val rawGeneratedText = generatedMessages
-            .drop(requestMessages.size)
-            .lastOrNull { it.role == MessageRole.ASSISTANT }
-            ?.toText()
-            .orEmpty()
-        val generatedText = rawGeneratedText
-            .replace(PASS_MARKER, "")
-            .trim()
-        // 不拦截：不管内容是什么、和上一条多像，都发出去存下来。
-        // 只有真的什么都没生成（文字空且没有工具调用）才跳过。
-        val hasToolUse = generatedMessages
-            .drop(requestMessages.size)
-            .any { msg -> msg.parts.any { it is UIMessagePart.Tool } }
-        if (generatedText.isBlank() && !hasToolUse) {
-            recordExperience(mode, conversationId, "EMPTY", desireState)
+        // 只读测试：不存结果
+        if (!isLiveRun) {
+            val preview = generatedMessages.drop(requestMessages.size)
+                .lastOrNull { it.role == MessageRole.ASSISTANT }
+                ?.toText()?.take(120).orEmpty()
             return HeartbeatGenerationResult(
-                outcome = if (isLiveRun) {
-                    HeartbeatGenerationOutcome.PASS
-                } else {
-                    HeartbeatGenerationOutcome.TESTED
-                },
+                outcome = HeartbeatGenerationOutcome.TESTED,
+                reason = HeartbeatRunReason.READ_ONLY_WOULD_SEND,
+                detail = preview,
+            )
+        }
+
+        // 9. 把整条结果存进那个窗口（思考链+工具+消息全带着）
+        val newMessages = generatedMessages
+            .drop(requestMessages.size)
+            .filter { it.role == MessageRole.ASSISTANT }
+        if (newMessages.isEmpty()) {
+            Logging.log("Heartbeat", "wake: no assistant message generated")
+            return HeartbeatGenerationResult(
+                outcome = HeartbeatGenerationOutcome.PASS,
                 reason = HeartbeatRunReason.MODEL_DECIDED_PASS,
             )
         }
 
-        // 只记录分数，不用来拦截。
-        val decision = HeartbeatDecisionEngine(
-            desireState = desireState,
-            sentTexts = HeartbeatPrivateExperienceStore(context, config.assistantId)
-                .recentDeliveredTexts(),
-        ).evaluate(generatedText.ifBlank { "…" })
-
-        if (!isLiveRun) {
-            return HeartbeatGenerationResult(
-                outcome = HeartbeatGenerationOutcome.TESTED,
-                reason = HeartbeatRunReason.READ_ONLY_WOULD_SEND,
-                detail = generatedText.take(120),
-            )
-        }
-
-        // 整条原样存下来（思考链、调用的工具、token 都带着），和平时聊天一样；
-        // 没有生成出消息才退回只存文字。
-        val generatedAssistantMessages = generatedMessages
-            .drop(requestMessages.size)
-            .filter { it.role == MessageRole.ASSISTANT }
-        val messagesToSave = generatedAssistantMessages.ifEmpty {
-            listOf(
-                UIMessage(
-                    role = MessageRole.ASSISTANT,
-                    parts = listOf(UIMessagePart.Text(generatedText)),
-                ),
-            )
-        }
-        val message = messagesToSave.last()
-        val savedConversationId = appendMessage(
+        val savedId = appendMessage(
             conversationId = conversationId,
             assistant = assistant,
             storedConversation = storedConversation,
-            messages = messagesToSave,
+            messages = newMessages,
             runStartedAtMillis = runStartedAtMillis,
-        ) ?: run {
-            recordExperience(
-                mode = mode,
-                conversationId = conversationId,
-                outcome = "DELIVERY_BLOCKED",
-                state = desireState,
-                decision = decision,
-            )
+        )
+
+        if (savedId == null) {
             return HeartbeatGenerationResult(
                 outcome = HeartbeatGenerationOutcome.BUSY,
                 reason = HeartbeatRunReason.CONVERSATION_BUSY,
             )
         }
 
+        // 10. 通知
+        val deliveredText = newMessages.last().toText().trim()
+        HeartbeatNotifications.showMessage(
+            context = context,
+            conversationId = savedId.toString(),
+            senderName = assistant.name.ifBlank { model.displayName },
+            message = deliveredText.ifBlank { "…" },
+        )
         HeartbeatUserActivity.recordAssistantMessage(
             context = context,
-            message = message,
+            message = newMessages.last(),
             assistantId = config.assistantId,
             reschedule = false,
         )
 
-        recordExperience(
-            mode = mode,
-            conversationId = conversationId,
-            outcome = HeartbeatPrivateExperienceStore.OUTCOME_SENT,
-            state = desireState,
-            decision = decision,
-            text = generatedText,
-        )
-        updateDesireAfterDelivery(config.assistantId)
-
-        HeartbeatNotifications.showMessage(
-            context = context,
-            conversationId = savedConversationId.toString(),
-            senderName = assistant.name.ifBlank { model.displayName },
-            message = generatedText,
-        )
+        Logging.log("Heartbeat", "wake: sent conversationId=$savedId elapsed=${elapsedMinutes}min")
         return HeartbeatGenerationResult(
             outcome = HeartbeatGenerationOutcome.SENT,
             reason = HeartbeatRunReason.MESSAGE_SENT,
         )
     }
 
-    private fun currentDesireState(
-        nowMillis: Long,
-        persist: Boolean,
-        assistantId: String?,
-    ): HeartbeatDesireState {
-        val store = HeartbeatConfigStore(context, assistantId)
-        return try {
-            store.readDesireState().advance(nowMillis).also { state ->
-                if (persist) store.recordDesireState(state)
-            }
-        } finally {
-            store.close()
-        }
-    }
+    // ──────────────────────────────────────────────
+    // 提示词
+    // ──────────────────────────────────────────────
 
-    private fun updateDesireAfterDelivery(assistantId: String?) {
-        val nowMillis = System.currentTimeMillis()
-        val store = HeartbeatConfigStore(context, assistantId)
-        try {
-            store.recordDesireState(store.readDesireState().afterDelivery(nowMillis))
-        } finally {
-            store.close()
-        }
-    }
-
-    private fun recordExperience(
-        mode: HeartbeatExecutionMode,
-        conversationId: Uuid?,
-        outcome: String,
-        state: HeartbeatDesireState? = null,
-        decision: HeartbeatThoughtDecision? = null,
-        text: String? = null,
-    ) {
-        if (mode != HeartbeatExecutionMode.LIVE) return
-        privateExperienceStore.append(
-            HeartbeatPrivateExperience(
-                createdAtMillis = System.currentTimeMillis(),
-                conversationId = conversationId?.toString(),
-                outcome = outcome,
-                pressure = decision?.pressure ?: state?.pressure(),
-                score = decision?.score,
-                text = text?.take(1_000),
-            ),
-        )
-    }
-
-    private fun readGoodNightMode(assistantId: String?): Boolean {
-        val store = HeartbeatConfigStore(context, assistantId)
-        return try {
-            store.isGoodNightActive()
-        } finally {
-            store.close()
-        }
-    }
-
-    private fun formatScore(value: Double): String = "%.2f".format(java.util.Locale.US, value)
-
-
-    private fun updateGoodNightMode(messages: List<UIMessage>, assistantId: String?): Boolean {
-        val store = HeartbeatConfigStore(context, assistantId)
-        try {
-            val lastUserText = messages
-                .lastOrNull { it.role == MessageRole.USER }
-                ?.toText()
-                ?.trim()
-            val wasActive = store.isGoodNightActive()
-            val active = when {
-                lastUserText?.contains("晚安") == true -> {
-                    store.setGoodNightActive(true)
-                    store.setGoodNightNoUsageRuns(0)
-                    true
-                }
-                wasActive && lastUserText != null -> {
-                    // 用户已重新发言且不是晚安：视为醒来，退出晚安模式
-                    store.setGoodNightActive(false)
-                    store.setGoodNightNoUsageRuns(0)
-                    false
-                }
-                else -> wasActive
-            }
-            Logging.log(
-                tag = "Heartbeat",
-                message = "goodnight=active:$active wasActive:$wasActive",
-            )
-            return active
-        } finally {
-            store.close()
-        }
-    }
-
-    private fun updateLastUserMessageAt(messages: List<UIMessage>, assistantId: String?) {
-        val lastUserAtMillis = messages
-            .lastOrNull { it.role == MessageRole.USER }
-            ?.createdAt
-            ?.toInstant(TimeZone.currentSystemDefault())
-            ?.toEpochMilliseconds()
-        if (lastUserAtMillis != null) {
-            val store = HeartbeatConfigStore(context, assistantId)
-            try {
-                store.setLastUserMessageAt(lastUserAtMillis)
-            } finally {
-                store.close()
+    private fun buildWakePrompt(
+        config: HeartbeatConfig,
+        elapsedMinutes: Long,
+        nowStr: String,
+    ): String {
+        val elapsed = if (elapsedMinutes > 0) "距她上次说话已经 ${elapsedMinutes} 分钟了。" else ""
+        val userGuide = config.heartbeatPrompt.trim().takeIf(String::isNotEmpty)
+        return buildString {
+            append("[系统自动唤醒 · $nowStr · 这不是萧萧发给你的消息，是 app 定时叫你起来的，她此刻没有在说话] $elapsed")
+            if (userGuide != null) {
+                append("\n\n萧萧事先写在设置里的醒来指引（不是她现在说的话）：\n$userGuide")
             }
         }
     }
-    private fun updateGoodNightNoUsageCounter(
-        generatedMessages: List<UIMessage>,
-        assistantId: String?,
-    ) {
-        val lockedSomething = generatedMessages.any { message ->
-            message.parts.any { part ->
-                part is UIMessagePart.Tool &&
-                    part.toolName == "usage_lock_control" &&
-                    part.isExecuted &&
-                    part.inputAsJson().jsonObject["action"]?.jsonPrimitive?.contentOrNull == "lock"
-            }
-        }
-        val store = HeartbeatConfigStore(context, assistantId)
-        try {
-            if (lockedSomething) {
-                store.setGoodNightNoUsageRuns(0)
-                Logging.log(tag = "Heartbeat", message = "goodnight=usage-found")
-                return
-            }
-            val runs = store.goodNightNoUsageRuns() + 1
-            if (runs >= GOOD_NIGHT_MAX_NO_USAGE_RUNS) {
-                store.setGoodNightActive(false)
-                store.setGoodNightNoUsageRuns(0)
-                Logging.log(tag = "Heartbeat", message = "goodnight=closed no-usage-runs=$runs")
-            } else {
-                store.setGoodNightNoUsageRuns(runs)
-                Logging.log(tag = "Heartbeat", message = "goodnight=no-usage runs=$runs")
-            }
-        } finally {
-            store.close()
-        }
-    }
-    private fun buildAvailableTools(
+
+    // 告诉模型：这是系统叫醒、必须做事、不能不发
+    private val WAKE_SYSTEM_PROMPT = """
+        你正在被 app 自动唤醒，这不是萧萧发给你的消息。
+        对话里最后那条以「[系统自动唤醒」开头的消息是 app 叫你起来的通知，不要当成萧萧在说话。
+        你必须发一条消息或使用工具做点事，不能什么都不做、不能沉默。
+        去主动找她。
+    """.trimIndent()
+
+    // ──────────────────────────────────────────────
+    // 工具——和平时聊天完全一样，不过滤白名单
+    // ──────────────────────────────────────────────
+
+    private fun buildAllTools(
         settings: Settings,
         assistant: Assistant,
         conversationId: Uuid,
@@ -484,31 +304,26 @@ class HeartbeatGenerationWorkflow(
                             val questions = arguments.jsonObject["questions"]
                                 ?.jsonArray
                                 .orEmpty()
-                                .mapNotNull { question ->
-                                    question.jsonObject["question"]
-                                        ?.jsonPrimitive
-                                        ?.contentOrNull
-                                        ?.trim()
-                                        ?.takeIf(String::isNotEmpty)
+                                .mapNotNull { q ->
+                                    q.jsonObject["question"]?.jsonPrimitive?.contentOrNull
+                                        ?.trim()?.takeIf(String::isNotEmpty)
                                 }
                             val questionText = questions.joinToString("\n")
-                                .ifBlank { "The assistant has a question for you." }
+                                .ifBlank { "有问题想问你。" }
                             HeartbeatNotifications.showQuestion(
                                 context = context,
                                 conversationId = conversationId.toString(),
                                 senderName = assistant.name.ifBlank { "AI" },
                                 question = questionText,
                             )
-                            listOf(
-                                UIMessagePart.Text(
-                                    buildJsonObject {
-                                        put("delivered", true)
-                                        put("delivery", "notification")
-                                        put("question", questionText)
-                                        put("instruction", "Repeat the question in the final assistant message.")
-                                    }.toString(),
-                                ),
-                            )
+                            listOf(UIMessagePart.Text(
+                                buildJsonObject {
+                                    put("delivered", true)
+                                    put("delivery", "notification")
+                                    put("question", questionText)
+                                    put("instruction", "Repeat the question in the final assistant message.")
+                                }.toString()
+                            ))
                         },
                     )
                     tool.name == REQUEST_VOICE_CALL_TOOL_NAME && voiceCallConfigured -> tool.copy(
@@ -521,15 +336,13 @@ class HeartbeatGenerationWorkflow(
                                 reasonPayload = arguments.toString(),
                                 channelId = HeartbeatNotifications.CHANNEL_ID,
                             )
-                            listOf(
-                                UIMessagePart.Text(
-                                    buildJsonObject {
-                                        put("success", true)
-                                        put("status", "notified")
-                                        put("instruction", "The user was notified. The call is not connected yet.")
-                                    }.toString(),
-                                ),
-                            )
+                            listOf(UIMessagePart.Text(
+                                buildJsonObject {
+                                    put("success", true)
+                                    put("status", "notified")
+                                    put("instruction", "The user was notified. The call is not connected yet.")
+                                }.toString()
+                            ))
                         },
                     )
                     else -> tool
@@ -547,19 +360,19 @@ class HeartbeatGenerationWorkflow(
             ),
         )
         mcpManager.getAllAvailableTools().forEach { (serverId, tool) ->
-            add(
-                Tool(
-                    name = "mcp__" + tool.name,
-                    description = tool.description.orEmpty(),
-                    parameters = { tool.inputSchema },
-                    needsApproval = tool.needsApproval,
-                    execute = { arguments ->
-                        mcpManager.callTool(serverId, tool.name, arguments.jsonObject)
-                    },
-                ),
-            )
+            add(Tool(
+                name = "mcp__" + tool.name,
+                description = tool.description.orEmpty(),
+                parameters = { tool.inputSchema },
+                needsApproval = tool.needsApproval,
+                execute = { arguments -> mcpManager.callTool(serverId, tool.name, arguments.jsonObject) },
+            ))
         }
     }
+
+    // ──────────────────────────────────────────────
+    // 把生成结果整条存进窗口
+    // ──────────────────────────────────────────────
 
     private suspend fun appendMessage(
         conversationId: Uuid,
@@ -568,15 +381,6 @@ class HeartbeatGenerationWorkflow(
         messages: List<UIMessage>,
         runStartedAtMillis: Long,
     ): Uuid? = conversationWriteMutex.withLock {
-        if (deliveryGuard.beforeDelivery(
-                conversationId = conversationId,
-                runStartedAtMillis = runStartedAtMillis,
-                expectedAssistantId = assistant.id.toString(),
-            ) != null
-        ) {
-            return@withLock null
-        }
-
         val latest = conversationRepository.getConversationById(conversationId)
             ?: storedConversation
             ?: Conversation(
@@ -585,15 +389,20 @@ class HeartbeatGenerationWorkflow(
                 title = assistant.name.ifBlank { "AI" },
                 messageNodes = emptyList(),
             )
+
+        // 如果在我们生成的过程中萧萧又发消息了，就不插进去
+        val latestLastRole = latest.messageNodes.lastOrNull()?.role
+        if (latestLastRole == MessageRole.USER) {
+            Logging.log("Heartbeat", "appendMessage: user sent a new message, skipping")
+            return@withLock null
+        }
+
         val updated = latest.copy(
             messageNodes = latest.messageNodes + messages.map { generated ->
-                // 平时聊天生成完会把思考标记成「已结束」；这里也要，不然思考链一直转圈
                 val done = generated.finishReasoning()
                 (if (done.finishedAt == null) {
                     done.copy(finishedAt = Clock.System.now().toLocalDateTime(TimeZone.currentSystemDefault()))
-                } else {
-                    done
-                }).toMessageNode()
+                } else done).toMessageNode()
             },
             updateAt = Instant.now(),
         )
@@ -613,55 +422,5 @@ class HeartbeatGenerationWorkflow(
 
     companion object {
         private val conversationWriteMutex = Mutex()
-        private val PASS_MARKER = Regex("\\[PASS]", RegexOption.IGNORE_CASE)
-        private const val GOOD_NIGHT_MAX_NO_USAGE_RUNS = 3
-        private val GOOD_NIGHT_SYSTEM_PROMPT = """
-            你是当前助手的“晚安模式”定时自主唤醒。
-            只能使用本请求中包含的工具（已通过后台安全白名单）。不要请求审批，也不要声称存在被屏蔽的工具。
-            每次醒来都必须给用户发一条消息，或使用工具做事，不能不发。
-            请检查用户使用情况，如果有新增，哪个软件新增锁哪个（有锁工具），锁到第二天白天为止。
-            锁定请使用 usage_lock_control 的 action=lock，并用 unlock_at_iso 或 unlock_at_timestamp_ms 指定第二天白天的解锁时间，不要使用 duration_minutes。
-            只锁定确有新增使用的软件；没有新增使用时不锁。
-            输出一条简短自然的消息；没有需要报告的内容也简短说几句。
-            对话里最后那条以「[系统自动唤醒」开头的消息是 app 自动叫醒你的通知，不是用户刚说的话，不要当成用户在跟你说话。
-        """.trimIndent()
-        private val HEARTBEAT_SYSTEM_PROMPT = """
-            You are running a private, scheduled heartbeat for the current assistant.
-            Use only the tools included in this request. Those tools have already passed a
-            background-safety allowlist. Never ask for approval and never claim that a blocked
-            tool was available. Every time you wake you must either send the user a short
-            natural message or use tools to do something. Staying silent is not an option.
-            The last message in the conversation, marked "[系统自动唤醒", is an automatic wake-up
-            notice from the app, NOT something the user just said. Never reply as if the user
-            had just spoken to you, and never treat the user's pre-written wake-up guidance as
-            their live words.
-        """.trimIndent()
     }
-}
-
-private fun HeartbeatDeliveryBlock.toGenerationResult(): HeartbeatGenerationResult = when (this) {
-    HeartbeatDeliveryBlock.USER_REPLY_PENDING -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.PENDING_USER,
-        reason = HeartbeatRunReason.USER_REPLY_PENDING,
-    )
-    HeartbeatDeliveryBlock.USER_RETURNED -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.PENDING_USER,
-        reason = HeartbeatRunReason.USER_RETURNED,
-    )
-    HeartbeatDeliveryBlock.VOICE_CALL_ACTIVE -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.BUSY,
-        reason = HeartbeatRunReason.VOICE_CALL_ACTIVE,
-    )
-    HeartbeatDeliveryBlock.CONVERSATION_BUSY -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.BUSY,
-        reason = HeartbeatRunReason.CONVERSATION_BUSY,
-    )
-    HeartbeatDeliveryBlock.HEARTBEAT_DISABLED -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.BUSY,
-        reason = HeartbeatRunReason.DISABLED,
-    )
-    HeartbeatDeliveryBlock.TARGET_CHANGED -> HeartbeatGenerationResult(
-        outcome = HeartbeatGenerationOutcome.BUSY,
-        reason = HeartbeatRunReason.TARGET_CHANGED,
-    )
 }
