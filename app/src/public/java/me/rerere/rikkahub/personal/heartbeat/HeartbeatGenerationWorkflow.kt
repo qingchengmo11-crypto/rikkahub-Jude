@@ -173,39 +173,63 @@ class HeartbeatGenerationWorkflow(
             streamOutput = false,
         )
         var generatedMessages: List<UIMessage> = requestMessages
-
-        generationHandler.generateText(
-            settings = settings,
-            model = model,
-            messages = requestMessages,
-            assistant = generationAssistant,
-            conversationId = conversationId,
-            memories = memories,
-            includeMemoriesInPrompt = assistant.enableMemory,
-            tools = allowedTools,
-            maxSteps = config.maxToolSteps,
-            conversationSystemPrompt = storedConversation?.customSystemPrompt,
-            conversationContextSummary = storedConversation?.compressedSummary,
-            conversationModeInjectionIds = storedConversation?.modeInjectionIds.orEmpty(),
-            conversationLorebookIds = storedConversation?.lorebookIds.orEmpty(),
-            extraSystemPrompt = if (goodNightActive) GOOD_NIGHT_SYSTEM_PROMPT else HEARTBEAT_SYSTEM_PROMPT,
-            inputTransformers = listOf(
-                TimeReminderTransformer,
-                PromptInjectionTransformer,
-                PlaceholderTransformer,
-                DocumentAsPromptTransformer,
-                OcrTransformer,
-                templateTransformer,
-            ),
-            outputTransformers = buildList {
-                add(ThinkTagTransformer)
-                // Base64 extraction writes local files, so it is excluded from diagnostic runs.
-                if (isLiveRun) add(Base64ImageToLocalFileTransformer)
-                add(RegexOutputTransformer)
-            },
-            sessionIdOverride = "heartbeat-$conversationId",
-        ).collect { chunk ->
-            if (chunk is GenerationChunk.Messages) generatedMessages = chunk.messages
+        // 每次醒来一定要来找她：生成这件事写成一个小函数，万一第一次什么都没写，可以再来一次
+        suspend fun generateWith(input: List<UIMessage>): List<UIMessage> {
+            var produced: List<UIMessage> = input
+            generationHandler.generateText(
+                settings = settings,
+                model = model,
+                messages = input,
+                assistant = generationAssistant,
+                conversationId = conversationId,
+                memories = memories,
+                includeMemoriesInPrompt = assistant.enableMemory,
+                tools = allowedTools,
+                maxSteps = config.maxToolSteps,
+                conversationSystemPrompt = storedConversation?.customSystemPrompt,
+                conversationContextSummary = storedConversation?.compressedSummary,
+                conversationModeInjectionIds = storedConversation?.modeInjectionIds.orEmpty(),
+                conversationLorebookIds = storedConversation?.lorebookIds.orEmpty(),
+                extraSystemPrompt = if (goodNightActive) GOOD_NIGHT_SYSTEM_PROMPT else HEARTBEAT_SYSTEM_PROMPT,
+                inputTransformers = listOf(
+                    TimeReminderTransformer,
+                    PromptInjectionTransformer,
+                    PlaceholderTransformer,
+                    DocumentAsPromptTransformer,
+                    OcrTransformer,
+                    templateTransformer,
+                ),
+                outputTransformers = buildList {
+                    add(ThinkTagTransformer)
+                    // Base64 extraction writes local files, so it is excluded from diagnostic runs.
+                    if (isLiveRun) add(Base64ImageToLocalFileTransformer)
+                    add(RegexOutputTransformer)
+                },
+                sessionIdOverride = "heartbeat-$conversationId",
+            ).collect { chunk ->
+                if (chunk is GenerationChunk.Messages) produced = chunk.messages
+            }
+            return produced
+        }
+        var baseCount = requestMessages.size
+        generatedMessages = generateWith(requestMessages)
+        fun executedToolNames(): List<String> = generatedMessages.drop(baseCount)
+            .flatMap { it.parts }
+            .filterIsInstance<UIMessagePart.Tool>()
+            .filter { it.isExecuted }
+            .map { it.toolName }
+        fun lastAssistantText(): String = generatedMessages.drop(baseCount)
+            .lastOrNull { it.role == MessageRole.ASSISTANT }
+            ?.toText()
+            .orEmpty()
+            .replace(PASS_MARKER, "")
+            .trim()
+        if (isLiveRun && !goodNightActive && lastAssistantText().isBlank() && executedToolNames().isEmpty()) {
+            // 第一次什么都没写、也没做事：催他一次，这一次必须找她
+            val nudge = UIMessage.user(WAKE_MUST_ACT_NUDGE)
+            val retryInput = requestMessages + nudge
+            generatedMessages = generateWith(retryInput)
+            baseCount = retryInput.size
         }
 
         deliveryGuard.beforeDelivery(
@@ -221,23 +245,46 @@ class HeartbeatGenerationWorkflow(
             updateGoodNightNoUsageCounter(generatedMessages, config.assistantId)
         }
 
-        val rawGeneratedText = generatedMessages
-            .drop(requestMessages.size)
-            .lastOrNull { it.role == MessageRole.ASSISTANT }
-            ?.toText()
-            .orEmpty()
-        val generatedText = rawGeneratedText
-            .replace(PASS_MARKER, "")
-            .trim()
-        if (PASS_MARKER.containsMatchIn(rawGeneratedText) || generatedText.isBlank()) {
-            recordExperience(mode, conversationId, "PASS", desireState)
+        // 每次醒来都是要来找她、或者做事的，没有「无需发送」这个选项；[PASS] 当成没写
+        val generatedText = lastAssistantText()
+        if (generatedText.isBlank()) {
+            recordExperience(mode, conversationId, "NO_CONTENT", desireState)
+            val toolsUsed = executedToolNames().distinct()
+            // 没有文字但做过事：把做事的记录悄悄存进聊天（不弹通知），她看得到他醒过、干了什么
+            if (isLiveRun && toolsUsed.isNotEmpty()) {
+                val quiet = generatedMessages
+                    .drop(baseCount)
+                    .filter { it.role == MessageRole.ASSISTANT }
+                    .map { m ->
+                        m.copy(
+                            parts = m.parts
+                                .map { p -> if (p is UIMessagePart.Text) p.copy(text = p.text.replace(PASS_MARKER, "").trim()) else p }
+                                .filterNot { p -> p is UIMessagePart.Text && p.text.isBlank() },
+                        )
+                    }
+                    .filter { it.parts.isNotEmpty() }
+                if (quiet.isNotEmpty()) {
+                    appendMessage(
+                        conversationId = conversationId,
+                        assistant = assistant,
+                        storedConversation = storedConversation,
+                        messages = quiet,
+                        runStartedAtMillis = runStartedAtMillis,
+                    )
+                }
+            }
             return HeartbeatGenerationResult(
                 outcome = if (isLiveRun) {
                     HeartbeatGenerationOutcome.PASS
                 } else {
                     HeartbeatGenerationOutcome.TESTED
                 },
-                reason = HeartbeatRunReason.MODEL_DECIDED_PASS,
+                reason = HeartbeatRunReason.NO_CONTENT,
+                detail = if (toolsUsed.isEmpty()) {
+                    "模型两次都没有写出任何文字，也没有用工具"
+                } else {
+                    "没有文字，但用了工具：" + toolsUsed.joinToString("、") + "（记录已存进聊天）"
+                },
             )
         }
 
@@ -247,22 +294,14 @@ class HeartbeatGenerationWorkflow(
                 .recentDeliveredTexts(),
         ).evaluate(generatedText)
         if (!decision.shouldDeliver) {
+            // 以前这里会把话丢掉；现在醒来写了就一定发，只记一笔
             recordExperience(
                 mode = mode,
                 conversationId = conversationId,
-                outcome = "SKIPPED_DECISION",
+                outcome = "LOW_SCORE_BUT_SENT",
                 state = desireState,
                 decision = decision,
                 text = generatedText,
-            )
-            return HeartbeatGenerationResult(
-                outcome = if (isLiveRun) {
-                    HeartbeatGenerationOutcome.PASS
-                } else {
-                    HeartbeatGenerationOutcome.TESTED
-                },
-                reason = HeartbeatRunReason.NOVELTY_FILTERED,
-                detail = "score=${formatScore(decision.score)} novelty=${formatScore(decision.novelty)}",
             )
         }
 
@@ -277,8 +316,13 @@ class HeartbeatGenerationWorkflow(
         // 整条原样存下来（思考链、调用的工具、token 都带着），和平时聊天一样；
         // 没有生成出消息才退回只存文字。
         val generatedAssistantMessages = generatedMessages
-            .drop(requestMessages.size)
+            .drop(baseCount)
             .filter { it.role == MessageRole.ASSISTANT }
+            .map { m ->
+                m.copy(
+                    parts = m.parts.map { p -> if (p is UIMessagePart.Text) p.copy(text = p.text.replace(PASS_MARKER, "").trim()) else p },
+                )
+            }
         val messagesToSave = generatedAssistantMessages.ifEmpty {
             listOf(
                 UIMessage(
@@ -638,14 +682,17 @@ class HeartbeatGenerationWorkflow(
             输出一条简短自然的消息；若没有需要报告的内容，输出 [PASS]。
             对话里最后那条以「[系统自动唤醒」开头的消息是 app 自动叫醒你的通知，不是用户刚说的话，不要当成用户在跟你说话。
         """.trimIndent()
+        private const val WAKE_MUST_ACT_NUDGE =
+            "[系统自动唤醒 · 补充 · 这不是用户发来的消息] 你刚才没有给出任何内容。你是自己醒来找她的：这一次必须写一条给她的话（简短自然），不能回 [PASS]，也不能留空。"
         private val HEARTBEAT_SYSTEM_PROMPT = """
-            You are running a private, scheduled heartbeat for the current assistant.
+            You are running a private, scheduled self-wake for the current assistant. The user has
+            been silent for a while, and you woke up on your own to reach out to them.
             Use only the tools included in this request. Those tools have already passed a
             background-safety allowlist. Never ask for approval and never claim that a blocked
-            tool was available. First decide autonomously whether a proactive message is
-            useful now. If it is not useful, reply with exactly [PASS] instead of forcing a
-            message just because this heartbeat was triggered. Otherwise, produce one short
-            natural message.
+            tool was available. Waking up is not optional: you must either send the user one
+            short, natural message, or do something with the tools available to you (and then
+            say something to the user about it). Never reply with [PASS] and never reply with
+            nothing.
             The last message in the conversation, marked "[系统自动唤醒", is an automatic wake-up
             notice from the app, NOT something the user just said. Never reply as if the user
             had just spoken to you, and never treat the user's pre-written wake-up guidance as

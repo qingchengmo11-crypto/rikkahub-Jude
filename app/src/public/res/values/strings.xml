@@ -34,8 +34,8 @@
   <string name="heartbeat_next_trigger">&#x4E0B;&#x6B21;&#x89E6;&#x53D1;&#xFF1A;%1$s</string>
   <string name="heartbeat_not_scheduled">&#x5C1A;&#x672A;&#x5B89;&#x6392;</string>
   <string name="heartbeat_runtime_settings_title">&#x8FD0;&#x884C;&#x53C2;&#x6570;</string>
-  <string name="heartbeat_min_interval">&#x6700;&#x77ED;&#x95F4;&#x9694;&#xFF08;&#x5206;&#x949F;&#xFF09;</string>
-  <string name="heartbeat_max_interval">&#x6700;&#x957F;&#x95F4;&#x9694;&#xFF08;&#x5206;&#x949F;&#xFF09;</string>
+  <string name="heartbeat_min_interval">不说话多少分钟后自动醒来（分钟）</string>
+  <string name="heartbeat_max_interval">最长间隔（已不使用，随便填）</string>
   <string name="heartbeat_timeout">&#x5355;&#x6B21;&#x8D85;&#x65F6;&#xFF08;&#x79D2;&#xFF09;</string>
   <string name="heartbeat_max_steps">&#x6700;&#x5927;&#x5DE5;&#x5177;&#x8C03;&#x7528;&#x6B65;&#x6570;</string>
   <string name="heartbeat_allow_low_risk_writes">&#x5141;&#x8BB8;&#x4F4E;&#x98CE;&#x9669;&#x5199;&#x5165;&#x5DE5;&#x5177;</string>
@@ -53,7 +53,7 @@
   <string name="heartbeat_status_queued">&#x5DF2;&#x6392;&#x961F;</string>
   <string name="heartbeat_status_running">&#x6B63;&#x5728;&#x8FD0;&#x884C;</string>
   <string name="heartbeat_status_sent">&#x5DF2;&#x53D1;&#x9001;&#x4E3B;&#x52A8;&#x6D88;&#x606F;</string>
-  <string name="heartbeat_status_pass">&#x5DF2;&#x8FD0;&#x884C;&#xFF0C;&#x672C;&#x6B21;&#x65E0;&#x9700;&#x53D1;&#x9001;</string>
+  <string name="heartbeat_status_pass">已运行，但这次没有发出消息，原因见下方</string>
   <string name="heartbeat_status_pending_user">&#x5DF2;&#x8DF3;&#x8FC7;&#xFF1A;&#x6B63;&#x5728;&#x7B49;&#x5F85;&#x7528;&#x6237;&#x56DE;&#x590D;</string>
   <string name="heartbeat_status_busy">&#x5DF2;&#x8DF3;&#x8FC7;&#xFF1A;&#x4F1A;&#x8BDD;&#x6216;&#x81EA;&#x4E3B;&#x5524;&#x9192;&#x6B63;&#x5728;&#x8FD0;&#x884C;</string>
   <string name="heartbeat_status_no_model">&#x5DF2;&#x8DF3;&#x8FC7;&#xFF1A;&#x6CA1;&#x6709;&#x53EF;&#x7528;&#x6A21;&#x578B;</string>
@@ -97,6 +97,7 @@
   <string name="heartbeat_reason_none">无</string>
   <string name="heartbeat_reason_message_sent">主动消息已成功写入并通知</string>
   <string name="heartbeat_reason_model_pass">模型判断当前无需发送</string>
+  <string name="heartbeat_reason_no_content">模型这次没有给出可发送的文字（已催过一次）</string>
   <string name="heartbeat_reason_novelty_filtered">候选内容重复度或发送评分未达标</string>
   <string name="heartbeat_reason_read_only_test">正在执行只读测试</string>
   <string name="heartbeat_reason_read_only_would_send">测试结果：正式运行时会发送这条候选消息</string>

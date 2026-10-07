@@ -178,6 +178,7 @@ private fun HeartbeatRunReason.displayText(): String = stringResource(
         HeartbeatRunReason.NONE -> R.string.heartbeat_reason_none
         HeartbeatRunReason.MESSAGE_SENT -> R.string.heartbeat_reason_message_sent
         HeartbeatRunReason.MODEL_DECIDED_PASS -> R.string.heartbeat_reason_model_pass
+        HeartbeatRunReason.NO_CONTENT -> R.string.heartbeat_reason_no_content
         HeartbeatRunReason.NOVELTY_FILTERED -> R.string.heartbeat_reason_novelty_filtered
         HeartbeatRunReason.READ_ONLY_TEST -> R.string.heartbeat_reason_read_only_test
         HeartbeatRunReason.READ_ONLY_WOULD_SEND -> R.string.heartbeat_reason_read_only_would_send

@@ -62,18 +62,12 @@ object HeartbeatScheduler {
         store.close()
         val autonomousWakeAt = HeartbeatScheduleStore(context)
             .nextWakeAtMillis(assistantId)
+        // 固定间隔：她说完（或他发完）之后，安静满「最短间隔」这么多分钟就醒来找她。
+        // 不再看「依恋/好奇/疲惫」的冲动，也不随机抖动；最长间隔这一项不再起作用。
         val delayMinutes = if (goodNightActive) {
             GOOD_NIGHT_INTERVAL_MINUTES
         } else {
-            val baseDelayMinutes = desireState.nextWakeMinutes(
-                minimum = config.minIntervalMinutes,
-                maximum = config.maxIntervalMinutes,
-            )
-            HeartbeatScheduleTiming.jitteredDelayMinutes(
-                baseMinutes = baseDelayMinutes,
-                minimumMinutes = config.minIntervalMinutes,
-                maximumMinutes = config.maxIntervalMinutes,
-            )
+            config.minIntervalMinutes.toLong()
         }
         val regularTriggerAt = HeartbeatScheduleTiming.nextRegularTriggerAtMillis(
             nowMillis = now,

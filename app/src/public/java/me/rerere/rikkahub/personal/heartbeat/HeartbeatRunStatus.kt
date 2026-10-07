@@ -54,6 +54,7 @@ enum class HeartbeatRunReason {
     NONE,
     MESSAGE_SENT,
     MODEL_DECIDED_PASS,
+    NO_CONTENT,
     NOVELTY_FILTERED,
     READ_ONLY_TEST,
     READ_ONLY_WOULD_SEND,
