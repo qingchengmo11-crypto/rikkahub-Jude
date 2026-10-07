@@ -93,8 +93,8 @@ class MomentsVM(
         }
     }
 
-    /** 她删自己写的随记（只删她自己写的，不会删到 Flow 写的）。 */
-    fun deleteUserNote(assistantId: Uuid, momentId: Uuid) {
+    /** 她删任何人写的随记（她自己的和 Flow 写的都可以删）。 */
+    fun deleteAnyNote(assistantId: Uuid, momentId: Uuid) {
         viewModelScope.launch {
             momentRepository.deleteMoments(
                 assistantId = assistantId,
@@ -102,7 +102,7 @@ class MomentsVM(
                 keyword = "",
                 latest = false,
                 limit = 1,
-                author = MomentAuthor.USER,
+                author = null,
             )
         }
     }

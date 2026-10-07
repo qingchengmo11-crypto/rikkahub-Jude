@@ -225,12 +225,13 @@ fun MomentsOverlay(
                                     noteFont = noteFont,
                                     onEdit = { pendingEdit = note },
                                     onDelete = { pendingDelete = note },
+                                canDelete = true,
                                 )
                             }
                         }
                         item {
                             Text(
-                                text = "长按自己写的随记，可以编辑或删除",
+                                text = "长按随记：她可以编辑或删除任何一条，Flow 只能删自己写的",
                                 style = noteStyle(noteFont, 13, PaperDim),
                                 textAlign = TextAlign.Center,
                                 modifier = Modifier
@@ -283,7 +284,7 @@ fun MomentsOverlay(
             text = { Text("删掉就找不回来了。", style = noteStyle(noteFont, 16)) },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.deleteUserNote(assistantId, note.id)
+                    vm.deleteAnyNote(assistantId, note.id)
                     pendingDelete = null
                 }) { Text("删除", style = noteStyle(noteFont, 16)) }
             },
@@ -401,6 +402,7 @@ private fun NoteCard(
     noteFont: FontFamily,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
+    canDelete: Boolean = false,
 ) {
     var expanded by remember { mutableStateOf(false) }
     var menuOpen by remember { mutableStateOf(false) }
@@ -418,7 +420,7 @@ private fun NoteCard(
             .background(PaperCard)
             .combinedClickable(
                 onClick = { expanded = !expanded },
-                onLongClick = if (mine) ({ menuOpen = true }) else null,
+                onLongClick = if (mine || canDelete) ({ menuOpen = true }) else null,
             ),
     ) {
         Column(
@@ -460,14 +462,18 @@ private fun NoteCard(
             NoteImages(moment.imageUris)
         }
         DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-            DropdownMenuItem(
-                text = { Text("编辑", style = noteStyle(noteFont, 16)) },
-                onClick = { menuOpen = false; onEdit() },
-            )
-            DropdownMenuItem(
-                text = { Text("删除", style = noteStyle(noteFont, 16)) },
-                onClick = { menuOpen = false; onDelete() },
-            )
+            if (mine) {
+                DropdownMenuItem(
+                    text = { Text("编辑", style = noteStyle(noteFont, 16)) },
+                    onClick = { menuOpen = false; onEdit() },
+                )
+            }
+            if (mine || canDelete) {
+                DropdownMenuItem(
+                    text = { Text("删除", style = noteStyle(noteFont, 16)) },
+                    onClick = { menuOpen = false; onDelete() },
+                )
+            }
         }
         Image(
             painter = painterResource(deco.res),
