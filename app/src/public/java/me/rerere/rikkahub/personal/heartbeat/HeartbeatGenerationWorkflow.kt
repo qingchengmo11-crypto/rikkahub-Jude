@@ -229,8 +229,13 @@ class HeartbeatGenerationWorkflow(
         val generatedText = rawGeneratedText
             .replace(PASS_MARKER, "")
             .trim()
-        if (PASS_MARKER.containsMatchIn(rawGeneratedText) || generatedText.isBlank()) {
-            recordExperience(mode, conversationId, "PASS", desireState)
+        // 不拦截：不管内容是什么、和上一条多像，都发出去存下来。
+        // 只有真的什么都没生成（文字空且没有工具调用）才跳过。
+        val hasToolUse = generatedMessages
+            .drop(requestMessages.size)
+            .any { msg -> msg.parts.any { it is UIMessagePart.Tool } }
+        if (generatedText.isBlank() && !hasToolUse) {
+            recordExperience(mode, conversationId, "EMPTY", desireState)
             return HeartbeatGenerationResult(
                 outcome = if (isLiveRun) {
                     HeartbeatGenerationOutcome.PASS
@@ -241,30 +246,12 @@ class HeartbeatGenerationWorkflow(
             )
         }
 
+        // 只记录分数，不用来拦截。
         val decision = HeartbeatDecisionEngine(
             desireState = desireState,
             sentTexts = HeartbeatPrivateExperienceStore(context, config.assistantId)
                 .recentDeliveredTexts(),
-        ).evaluate(generatedText)
-        if (!decision.shouldDeliver) {
-            recordExperience(
-                mode = mode,
-                conversationId = conversationId,
-                outcome = "SKIPPED_DECISION",
-                state = desireState,
-                decision = decision,
-                text = generatedText,
-            )
-            return HeartbeatGenerationResult(
-                outcome = if (isLiveRun) {
-                    HeartbeatGenerationOutcome.PASS
-                } else {
-                    HeartbeatGenerationOutcome.TESTED
-                },
-                reason = HeartbeatRunReason.NOVELTY_FILTERED,
-                detail = "score=${formatScore(decision.score)} novelty=${formatScore(decision.novelty)}",
-            )
-        }
+        ).evaluate(generatedText.ifBlank { "…" })
 
         if (!isLiveRun) {
             return HeartbeatGenerationResult(
