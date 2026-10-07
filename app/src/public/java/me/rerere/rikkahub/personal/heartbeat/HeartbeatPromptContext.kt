@@ -22,7 +22,7 @@ object HeartbeatPromptContext {
             append(SYSTEM_WAKE_MARKER)
             append(" · $now · 这不是用户发来的消息，是 app 定时自动叫醒你，用户此刻没有在说话]\n")
             editablePrompt.trim().takeIf(String::isNotEmpty)?.let { prompt ->
-                append("下面是用户事先写在设置里的「醒来指引」，不是用户现在说的话。请自己决定做不做、怎么做：\n")
+                append("下面是用户事先写在设置里的「醒来指引」，不是用户现在说的话。请照着这个醒来做、自己决定怎么做：\n")
                 append(prompt)
                 append("\n\n")
             }
