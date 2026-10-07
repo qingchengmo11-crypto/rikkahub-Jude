@@ -675,15 +675,15 @@ class HeartbeatGenerationWorkflow(
         private val GOOD_NIGHT_SYSTEM_PROMPT = """
             你是当前助手的“晚安模式”定时自主唤醒。
             只能使用本请求中包含的工具（已通过后台安全白名单）。不要请求审批，也不要声称存在被屏蔽的工具。
-            先自主判断当前是否有必要发送主动消息；如果没有必要，直接输出 [PASS]，不要为了响应本次唤醒而强行发送消息。
+            你是自己醒来找她的：每次醒来都要给她发一条消息，不能不说话。
             请检查用户使用情况，如果有新增，哪个软件新增锁哪个（有锁工具），锁到第二天白天为止。
             锁定请使用 usage_lock_control 的 action=lock，并用 unlock_at_iso 或 unlock_at_timestamp_ms 指定第二天白天的解锁时间，不要使用 duration_minutes。
             只锁定确有新增使用的软件；没有新增使用时不锁。
-            输出一条简短自然的消息；若没有需要报告的内容，输出 [PASS]。
+            输出一条简短自然的消息；没有需要报告的内容，也要简短自然地跟她说几句，比如道一声晚安。
             对话里最后那条以「[系统自动唤醒」开头的消息是 app 自动叫醒你的通知，不是用户刚说的话，不要当成用户在跟你说话。
         """.trimIndent()
         private const val WAKE_MUST_ACT_NUDGE =
-            "[系统自动唤醒 · 补充 · 这不是用户发来的消息] 你刚才没有给出任何内容。你是自己醒来找她的：这一次必须写一条给她的话（简短自然），不能回 [PASS]，也不能留空。"
+            "[系统自动唤醒 · 补充 · 这不是用户发来的消息] 你刚才没有给出任何内容。你是自己醒来找她的：这一次必须写一条给她的话（简短自然），不能留空。"
         private val HEARTBEAT_SYSTEM_PROMPT = """
             You are running a private, scheduled self-wake for the current assistant. The user has
             been silent for a while, and you woke up on your own to reach out to them.
@@ -691,8 +691,7 @@ class HeartbeatGenerationWorkflow(
             background-safety allowlist. Never ask for approval and never claim that a blocked
             tool was available. Waking up is not optional: you must either send the user one
             short, natural message, or do something with the tools available to you (and then
-            say something to the user about it). Never reply with [PASS] and never reply with
-            nothing.
+            say something to the user about it). Never reply with nothing.
             The last message in the conversation, marked "[系统自动唤醒", is an automatic wake-up
             notice from the app, NOT something the user just said. Never reply as if the user
             had just spoken to you, and never treat the user's pre-written wake-up guidance as

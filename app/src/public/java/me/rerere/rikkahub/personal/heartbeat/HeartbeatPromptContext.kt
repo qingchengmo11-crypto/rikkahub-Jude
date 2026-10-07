@@ -21,9 +21,12 @@ object HeartbeatPromptContext {
         return buildString {
             append(SYSTEM_WAKE_MARKER)
             append(" · $now · 这不是用户发来的消息，是 app 定时自动叫醒你，用户此刻没有在说话]\n")
-            append("她已经安静了一阵，这是你自己醒来要找她的：必须给她发一条消息，或者用工具做点事再告诉她。不要回复 [PASS]，不要留空。\n\n")
-            editablePrompt.trim().takeIf(String::isNotEmpty)?.let { prompt ->
-                append("下面是用户事先写在设置里的「醒来指引」，不是用户现在说的话。请自己决定做不做、怎么做：\n")
+            append("她已经安静了一阵，这是你自己醒来要找她的：必须给她发一条消息，或者用工具做点事再告诉她。不要留空。\n\n")
+            editablePrompt.lines()
+                .filterNot { it.contains("[PASS]", ignoreCase = true) }
+                .joinToString("\n")
+                .trim().takeIf(String::isNotEmpty)?.let { prompt ->
+                append("下面是用户事先写在设置里的「醒来指引」，不是用户现在说的话。请照着这个醒来做，具体怎么做你自己定：\n")
                 append(prompt)
                 append("\n\n")
             }
