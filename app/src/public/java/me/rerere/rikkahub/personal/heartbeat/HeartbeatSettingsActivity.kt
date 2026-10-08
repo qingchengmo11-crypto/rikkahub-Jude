@@ -166,16 +166,6 @@ class HeartbeatSettingsActivity : ComponentActivity() {
                         }
                         HeartbeatGlassSection {
                             HeartbeatHistoryDiagnosticsSection(diagnostics)
-                            if (assistantStore.isGoodNightActive()) {
-                                Text(
-                                    stringResource(
-                                        R.string.heartbeat_goodnight_on,
-                                        assistantStore.goodNightNoUsageRuns(),
-                                    ),
-                                )
-                            } else {
-                                Text(stringResource(R.string.heartbeat_goodnight_off))
-                            }
                         }
                         HeartbeatGlassSection {
                             Text(

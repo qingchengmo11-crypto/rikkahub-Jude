@@ -127,20 +127,6 @@ class HeartbeatConfigStore(
         preferences.edit().putLong(scopedKey(LAST_CLAIM_KEY), timestampMillis).commit()
     }
 
-    fun isGoodNightActive(): Boolean =
-        preferences.getBoolean(scopedKey(GOOD_NIGHT_ACTIVE_KEY), false)
-
-    fun setGoodNightActive(active: Boolean) {
-        preferences.edit().putBoolean(scopedKey(GOOD_NIGHT_ACTIVE_KEY), active).apply()
-    }
-
-    fun goodNightNoUsageRuns(): Int =
-        preferences.getInt(scopedKey(GOOD_NIGHT_NO_USAGE_RUNS_KEY), 0)
-
-    fun setGoodNightNoUsageRuns(runs: Int) {
-        preferences.edit().putInt(scopedKey(GOOD_NIGHT_NO_USAGE_RUNS_KEY), runs).apply()
-    }
-
     fun lastUserMessageAt(): Long =
         preferences.getLong(scopedKey(LAST_USER_MESSAGE_AT_KEY), 0L)
 
@@ -356,8 +342,6 @@ class HeartbeatConfigStore(
         private const val DIAGNOSTICS_KEY = "run_diagnostics_v1"
         private const val STATE_RECOVERY_AT_KEY = "state_recovery_at"
         private const val STATE_RECOVERY_AREA_KEY = "state_recovery_area"
-        private const val GOOD_NIGHT_ACTIVE_KEY = "good_night_active"
-        private const val GOOD_NIGHT_NO_USAGE_RUNS_KEY = "good_night_no_usage_runs"
         private const val LAST_USER_MESSAGE_AT_KEY = "last_user_message_at"
         private const val LAST_ASSISTANT_MESSAGE_AT_KEY = "last_assistant_message_at"
         private const val DESIRE_STATE_KEY = "desire_state"

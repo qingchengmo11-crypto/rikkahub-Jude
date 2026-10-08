@@ -13,24 +13,9 @@ object HeartbeatUserActivity {
         if (message.role != MessageRole.USER) return
 
         val messageAt = message.createdAt.toMessageAtMillis()
-        val text = message.toText().trim()
         val store = HeartbeatConfigStore(context, assistantId)
-        val wasGoodNightActive = store.isGoodNightActive()
         store.setLastUserMessageAt(messageAt)
         store.recordDesireState(store.readDesireState().afterUserMessage(System.currentTimeMillis()))
-        when {
-            text.contains(GOOD_NIGHT_MARKER) -> {
-                store.setGoodNightActive(true)
-                store.setGoodNightNoUsageRuns(0)
-                Logging.log("Heartbeat", "goodnight=activated:user-message")
-            }
-
-            wasGoodNightActive -> {
-                store.setGoodNightActive(false)
-                store.setGoodNightNoUsageRuns(0)
-                Logging.log("Heartbeat", "goodnight=deactivated:user-message")
-            }
-        }
         val config = store.read()
         store.close()
 
@@ -65,5 +50,4 @@ object HeartbeatUserActivity {
     private fun kotlinx.datetime.LocalDateTime.toMessageAtMillis(): Long =
         toInstant(TimeZone.currentSystemDefault()).toEpochMilliseconds()
 
-    private const val GOOD_NIGHT_MARKER = "晚安"
 }

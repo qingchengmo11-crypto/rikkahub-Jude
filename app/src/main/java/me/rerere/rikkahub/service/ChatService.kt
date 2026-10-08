@@ -77,6 +77,7 @@ import me.rerere.rikkahub.data.ai.transformers.PromptInjectionTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
+import me.rerere.rikkahub.data.ai.transformers.SystemWakeNoticeTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
 import me.rerere.rikkahub.data.datastore.CompressOpenAIConfig
 import me.rerere.rikkahub.data.datastore.Settings
@@ -216,6 +217,7 @@ private val inputTransformers by lazy {
     listOf(
         TimeReminderTransformer,
         PromptInjectionTransformer,
+        SystemWakeNoticeTransformer,
         PlaceholderTransformer,
         DocumentAsPromptTransformer,
         OcrTransformer,

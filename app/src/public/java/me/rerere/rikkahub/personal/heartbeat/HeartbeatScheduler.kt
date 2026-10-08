@@ -11,7 +11,6 @@ import me.rerere.common.android.Logging
 object HeartbeatScheduler {
     private const val REQUEST_CODE = 47021
     private const val LOG_TAG = "Heartbeat"
-    private const val GOOD_NIGHT_INTERVAL_MINUTES = 10L
     private const val MIN_SCHEDULE_LEAD_MILLIS = 1_000L
 
     /** Keeps one AlarmManager alarm armed for the earliest enabled assistant. */
@@ -52,7 +51,6 @@ object HeartbeatScheduler {
         }
 
         val store = HeartbeatConfigStore(context, assistantId)
-        val goodNightActive = store.isGoodNightActive()
         val lastAssistantMessageAt = store.lastAssistantMessageAt()
         val lastUserMessageAt = store.lastUserMessageAt()
         val now = System.currentTimeMillis()
@@ -62,19 +60,15 @@ object HeartbeatScheduler {
         store.close()
         val autonomousWakeAt = HeartbeatScheduleStore(context)
             .nextWakeAtMillis(assistantId)
-        val delayMinutes = if (goodNightActive) {
-            GOOD_NIGHT_INTERVAL_MINUTES
-        } else {
-            val baseDelayMinutes = desireState.nextWakeMinutes(
-                minimum = config.minIntervalMinutes,
-                maximum = config.maxIntervalMinutes,
-            )
-            HeartbeatScheduleTiming.jitteredDelayMinutes(
-                baseMinutes = baseDelayMinutes,
-                minimumMinutes = config.minIntervalMinutes,
-                maximumMinutes = config.maxIntervalMinutes,
-            )
-        }
+        val baseDelayMinutes = desireState.nextWakeMinutes(
+            minimum = config.minIntervalMinutes,
+            maximum = config.maxIntervalMinutes,
+        )
+        val delayMinutes = HeartbeatScheduleTiming.jitteredDelayMinutes(
+            baseMinutes = baseDelayMinutes,
+            minimumMinutes = config.minIntervalMinutes,
+            maximumMinutes = config.maxIntervalMinutes,
+        )
         val regularTriggerAt = HeartbeatScheduleTiming.nextRegularTriggerAtMillis(
             nowMillis = now,
             delayMinutes = delayMinutes,

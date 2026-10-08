@@ -34,7 +34,9 @@ import me.rerere.rikkahub.data.ai.transformers.PromptInjectionTransformer
 import me.rerere.rikkahub.data.ai.transformers.RegexOutputTransformer
 import me.rerere.rikkahub.data.ai.transformers.TemplateTransformer
 import me.rerere.rikkahub.data.ai.transformers.ThinkTagTransformer
+import me.rerere.rikkahub.data.ai.transformers.SystemWakeNoticeTransformer
 import me.rerere.rikkahub.data.ai.transformers.TimeReminderTransformer
+import me.rerere.rikkahub.data.ai.transformers.withSystemWakeNotice
 import me.rerere.rikkahub.data.datastore.Settings
 import me.rerere.rikkahub.data.datastore.SettingsStore
 import me.rerere.rikkahub.data.datastore.findModelById
@@ -174,6 +176,7 @@ class HeartbeatGenerationWorkflow(
             inputTransformers = listOf(
                 TimeReminderTransformer,
                 PromptInjectionTransformer,
+                SystemWakeNoticeTransformer,
                 PlaceholderTransformer,
                 DocumentAsPromptTransformer,
                 OcrTransformer,
@@ -202,9 +205,13 @@ class HeartbeatGenerationWorkflow(
         }
 
         // 9. 把整条结果存进那个窗口（思考链+工具+消息全带着）
+        // 那条系统唤醒通知记在他醒来的第一条消息上，以后回头看也知道这次是系统叫醒的
         val newMessages = generatedMessages
             .drop(requestMessages.size)
             .filter { it.role == MessageRole.ASSISTANT }
+            .mapIndexed { index, message ->
+                if (index == 0) message.withSystemWakeNotice(wakePrompt) else message
+            }
         if (newMessages.isEmpty()) {
             Logging.log("Heartbeat", "wake: no assistant message generated")
             return HeartbeatGenerationResult(
